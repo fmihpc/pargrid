@@ -870,7 +870,7 @@ namespace pargrid {
       int* neighbourChanges = new int[nbrProcesses.size()];                                   // Number of exports nbrs. process has
       ZOLTAN_ID_TYPE** neighbourMigratingCellIDs = new ZOLTAN_ID_TYPE* [nbrProcesses.size()]; // Global IDs of cells nbr. process is exporting
       MPI_processID** neighbourMigratingHosts    = new MPI_processID* [nbrProcesses.size()];  // New hosts for cells nbr. process exports
-
+      
       // Send the number of cells this process is exporting to all neighbouring process, 
       // and receive the number of exported cells per neighbouring process:
       size_t counter = 0;
@@ -1535,11 +1535,22 @@ namespace pargrid {
 	 }
       }
 
-      // Check that all local cells have this process as their host:
+      // Check that all hosts are valid:
       for (typename std::map<CellID,ParCell<C> >::const_iterator it=localCells.begin(); it!=localCells.end(); ++it) {
-	 if (it->second.host == myrank) continue;
-	 std::cerr << "P#" << myrank << " local C#" << it->first << " host " << it->second.host << std::endl;
-	 success = false;
+	 // Check that all local cells have this process as their host:
+	 if (it->second.host != myrank) {
+	    std::cerr << "P#" << myrank << " local C#" << it->first << " host " << it->second.host << std::endl;
+	    success = false;
+	 }
+	 // Check that all neighbour hosts have reasonable values:
+	 for (size_t i=0; i<it->second.neighbours.size(); ++i) {
+	    if (it->second.neighbours[i] == invalid()) continue; // Skip non-existing nbrs
+	    if (it->second.neighbourHosts[i] >= getProcesses()) {
+	       std::cerr << "P#" << myrank << " local C#" << it->first << " nbr #" << it->second.neighbours[i] << " host: ";
+	       std::cerr << it->second.neighbourHosts[i] << " is invalid" << std::endl;
+	       success = false;
+	    }
+	 }
       }
       
       // Check that all remote cells have a correct host. Each process sends everyone else
@@ -2203,7 +2214,10 @@ namespace pargrid {
 	 for (unsigned char nbr=0; nbr<it->second.info[0]; ++nbr) {
 	    const CellID nbrID = it->second.neighbours[nbr];
 	    if (nbrID == invalid()) continue;
-	    if (localCells.find(nbrID) == localCells.end()) remoteCells.insert(std::make_pair(nbrID,ParCell<C>()));
+	    if (localCells.find(nbrID) == localCells.end()) {
+	       remoteCells.insert(std::make_pair(nbrID,ParCell<C>()));
+	       std::cerr << "P#" << myrank << " C#" << it->first << " remote nbr " << nbrID << std::endl;
+	    }
 	 }
       }
       
@@ -2249,10 +2263,16 @@ namespace pargrid {
       // FIXME
       for (typename std::map<CellID,ParCell<C> >::iterator it=localCells.begin(); it!=localCells.end(); ++it) {
 	 for (size_t n=0; n<27; ++n) {
-	    if (it->second.neighbours[n] == invalid()) it->second.neighbourHosts[n] = MPI_PROC_NULL;
+	    if (it->second.neighbours[n] == invalid()) {
+	       it->second.neighbourHosts[n] = MPI_PROC_NULL;
+	       continue;
+	    }
 	    const CellID nbrID = it->second.neighbours[n];
 	    typename std::map<CellID,ParCell<C> >::const_iterator jt = localCells.find(nbrID);
 	    if (jt == localCells.end()) jt = remoteCells.find(nbrID);
+	    if (jt == remoteCells.end()) {
+	       std::cerr << "nbr " << nbrID << " not found in localCells or remoteCells, invalid = " << invalid() << std::endl;
+	    }
 	    it->second.neighbourHosts[n] = jt->second.host;
 	 }
       }
