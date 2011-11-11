@@ -2216,7 +2216,6 @@ namespace pargrid {
 	    if (nbrID == invalid()) continue;
 	    if (localCells.find(nbrID) == localCells.end()) {
 	       remoteCells.insert(std::make_pair(nbrID,ParCell<C>()));
-	       std::cerr << "P#" << myrank << " C#" << it->first << " remote nbr " << nbrID << std::endl;
 	    }
 	 }
       }
