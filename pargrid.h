@@ -214,6 +214,7 @@ namespace pargrid {
       bool getInitialized() const;
       std::vector<CellID>& getInteriorCells();
       void getLocalCellIDs(std::vector<CellID>& cells) const;
+      uint32_t getNeighbourFlags(CellID cellID) const;
       const std::set<MPI_processID>& getNeighbourProcesses() const;
       int getNeighbourReferenceCount(CellID cellID);
       CellID getNumberOfLocalCells() const;
@@ -1704,6 +1705,14 @@ namespace pargrid {
       for (typename std::map<CellID,ParCell<C> >::const_iterator it=localCells.begin(); it!=localCells.end(); ++it) {
 	 cells.push_back(it->first);
       }
+   }
+   
+   template<class C>
+   uint32_t ParGrid<C>::getNeighbourFlags(CellID cellID) const {
+      typename std::map<CellID,ParCell<C> >::const_iterator it = localCells.find(cellID);
+      if (it == localCells.end()) it = remoteCells.find(cellID);
+      if (it == remoteCells.end()) return std::numeric_limits<uint32_t>::max();
+      return it->second.neighbourFlags;
    }
    
    /** Get a list of neighbour processes. A process is considered to be a neighbour 
