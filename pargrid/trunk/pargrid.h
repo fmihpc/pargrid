@@ -49,8 +49,7 @@ namespace pargrid {
 
    template<class C>
    void cb_getAllCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,int N_cellIDs,ZOLTAN_ID_PTR globalID,
-				 ZOLTAN_ID_PTR localID,int N_coords,double* geometryData,int* rcode);
-   
+				 ZOLTAN_ID_PTR localID,int N_coords,double* geometryData,int* rcode);   
    template<class C>
    void cb_getCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,ZOLTAN_ID_PTR globalID,
 			   ZOLTAN_ID_PTR localID,double* geometryData,int* rcode);
@@ -212,6 +211,7 @@ namespace pargrid {
       MPI_Comm getComm() const;
       std::vector<CellID>& getExteriorCells();
       bool getInitialized() const;
+      const std::vector<CellID>& getInnerCells(unsigned int stencil,int identifier) const;
       std::vector<CellID>& getInteriorCells();
       void getLocalCellIDs(std::vector<CellID>& cells) const;
       uint32_t getNeighbourFlags(CellID cellID) const;
@@ -267,10 +267,9 @@ namespace pargrid {
 									   * when it is requested.*/
       std::vector<CellID> exteriorCells;                                  /**< List of exterior cells on this process, i.e. cells that lie on 
 									   * the boundary of the simulation domain. These cells have one or more 
-									   * missing neighbours. This list is updated only when needed.*/
+									   * missing neighbours. This list is recalculated only when needed.*/
       std::vector<CellID> interiorCells;                                  /**< List of interior cells on this process, i.e. cells with 
-									   * zero missing neighbours. This list is recalculated only when needed.*/
-      
+									   * zero missing neighbours. This list is recalculated only when needed.*/      
       CellWeight cellWeight;                                              /**< Cell weight scale, used to calculate cell weights for Zoltan.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
       MPI_Comm comm;                                                      /**< MPI communicator used by ParGrid.*/
@@ -1679,6 +1678,16 @@ namespace pargrid {
    template<class C>
    bool ParGrid<C>::getInitialized() const {return initialized;}
 
+   template<class C>
+   const std::vector<CellID>& ParGrid<C>::getInnerCells(unsigned int stencil,int identifier) const {
+      typename std::map<unsigned int,Stencil<C> >::const_iterator it = stencils.find(stencil);
+      if (it == stencils.end()) {
+	 std::cerr << "(PARGRID) ERROR: Non-existing stencil " << stencil << " requested in getInnerCells!" << std::endl;
+	 exit(1);
+      }
+      return it->second.getInnerCells();
+   }
+   
    template<class C>
    std::vector<CellID>& ParGrid<C>::getInteriorCells() {
       if (recalculateInteriorCells == true) {
