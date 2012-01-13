@@ -235,6 +235,7 @@ namespace pargrid {
       CellID getLocalID(CellID globalID) const;
       uint32_t getNeighbourFlags(CellID cellID) const;
       const std::set<MPI_processID>& getNeighbourProcesses() const;
+      CellID getNumberOfAllCells() const;
       CellID getNumberOfLocalCells() const;
       MPI_processID getProcesses() const;
       MPI_processID getRank() const;
@@ -1872,13 +1873,15 @@ namespace pargrid {
    template<class C>
    const std::set<MPI_processID>& ParGrid<C>::getNeighbourProcesses() const {return nbrProcesses;}
    
-   /** Get the number of cells on this process.
-    * @return Number of local cells.
-    */
+   /** Get the total number of cells on this process. This includes remote cells buffered on this process.
+    * @return Total number of cells hosted and buffered on this process.*/
    template<class C>
-   CellID ParGrid<C>::getNumberOfLocalCells() const {
-      return N_localCells;
-   }
+   CellID ParGrid<C>::getNumberOfAllCells() const {return cells.size();}
+   
+   /** Get the number of cells on this process.
+    * @return Number of local cells.*/
+   template<class C>
+   CellID ParGrid<C>::getNumberOfLocalCells() const {return N_localCells;}
    
    /** Get the number of MPI processes in the communicator used by ParGrid.
     * The value returned by this function is set in ParGrid::initialize.
