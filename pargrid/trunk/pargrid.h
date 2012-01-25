@@ -2023,6 +2023,7 @@ namespace pargrid {
       zoltan->Set_Param("OBJ_WEIGHT_DIM",objWeightDim.c_str());
       zoltan->Set_Param("EDGE_WEIGHT_DIM",edgeWeightDim.c_str());
       zoltan->Set_Param("DEBUG_LEVEL","0");
+      zoltan->Set_Param("REMAP","1");
       //zoltan->Set_Param("PHG_CUT_OBJECTIVE","CONNECTIVITY");
       //zoltan->Set_Param("CHECK_HYPERGRAPH","1");
       
