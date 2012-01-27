@@ -605,7 +605,7 @@ namespace pargrid {
 	 for (std::set<CellID>::const_iterator i=sends[jt->first].begin(); i!=sends[jt->first].end(); ++i) {
 	    const CellID localID = parGrid->getLocalID(*i);
 	    const bool sendingData = true;
-	    const int dummyRecvCount = -1;
+	    const int dummyRecvCount = 0;
 	    (*parGrid)[localID]->getData(sendingData,it->first,dummyRecvCount,dummyRecvCount,blockLengths+counter*N_dataElements,displacements+counter*N_dataElements,&type);
 	    ++counter;
 	 }
