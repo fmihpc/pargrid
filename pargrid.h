@@ -498,7 +498,7 @@ namespace pargrid {
 	       if (stencilType == localToRemoteUpdates)	sends[nbrHost].insert(globalIDs[i]);
 	       else sends[nbrHost].insert(nbrGlobalID);
 	    }
-	    
+
 	    // If neighbour type ID is in receivedNbrTypeIDs, add a receive:
 	    if (std::find(receivedNbrTypeIDs.begin(),receivedNbrTypeIDs.end(),nbr) != receivedNbrTypeIDs.end()) {
 	       if (stencilType == localToRemoteUpdates) {
@@ -560,14 +560,19 @@ namespace pargrid {
 	 const unsigned int N_dataElements = dummy.getDataElements(ID);
 	 
 	 // Allocate arrays for MPI datatypes:
-	 const size_t N_recvs = recvs.find(jt->first)->second.size() * N_dataElements;
-	 const size_t N_sends = sends.find(jt->first)->second.size() * N_dataElements;
+	 size_t N_recvs = 0;
+	 std::map<MPI_processID,std::set<pargrid::CellID> >::const_iterator tmp = recvs.find(jt->first);
+	 if (tmp != recvs.end()) N_recvs = tmp->second.size();	 
+	 size_t N_sends = 0;
+	 tmp = sends.find(jt->first);
+	 if (tmp != sends.end()) N_sends = tmp->second.size();
+	 
 	 blockLengths = new int[std::max(N_recvs,N_sends)];
 	 displacements = new MPI_Aint[std::max(N_recvs,N_sends)];
-
+	 types = new MPI_Datatype[std::max(N_recvs,N_sends)];
+	 
 	 // Get displacements from cells receiving data:
 	 int counter = 0;
-	 MPI_Datatype type;
 	 for (std::set<CellID>::const_iterator i=recvs[jt->first].begin(); i!=recvs[jt->first].end(); ++i) {
 	    const CellID localID = parGrid->getLocalID(*i);
 	    const bool sendingData = false;
@@ -584,21 +589,26 @@ namespace pargrid {
 	    
 	    switch (stencilType) {
 	     case localToRemoteUpdates:
-	       (*parGrid)[localID]->getData(sendingData,it->first,-1,-1,blockLengths+counter*N_dataElements,displacements+counter*N_dataElements,&type);
+	       (*parGrid)[localID]->getData(sendingData,it->first,-1,-1,blockLengths+counter*N_dataElements,
+					    displacements+counter*N_dataElements,types+counter*N_dataElements);
 	       break;
 	     case remoteToLocalUpdates:
-	       (*parGrid)[localID]->getData(sendingData,it->first,receivesPosted[*i],recvCounts[*i].size(),blockLengths+counter*N_dataElements,displacements+counter*N_dataElements,&type);
+	       (*parGrid)[localID]->getData(sendingData,it->first,receivesPosted[*i],recvCounts[*i].size(),blockLengths+counter*N_dataElements,
+					    displacements+counter*N_dataElements,types+counter*N_dataElements);
 	       ++receivesPosted[*i];
 	       break;
 	    }
 	    ++counter;
 	 }
-	    
-	 // Create MPI datatype for receiving all data at once from process jt->first:
-	 jt->second.recvs.push_back(TypeWrapper());
-	 MPI_Type_create_hindexed(N_recvs,blockLengths,displacements,type,&(jt->second.recvs.back().type));
-	 MPI_Type_commit(&(jt->second.recvs.back().type));
-	 ++info->second.N_receives;
+	 
+	 // Create MPI datatype for receiving all data at once from process jt->first.
+	 // A receive is inserted only if there are data to receive:
+	 if (N_recvs > 0) {
+	    jt->second.recvs.push_back(TypeWrapper());
+	    MPI_Type_create_struct(N_recvs,blockLengths,displacements,types,&(jt->second.recvs.back().type));
+	    MPI_Type_commit(&(jt->second.recvs.back().type));
+	    ++info->second.N_receives;
+	 }
 	    
 	 // Get displacements from cells sending data:
 	 counter = 0;
@@ -606,17 +616,19 @@ namespace pargrid {
 	    const CellID localID = parGrid->getLocalID(*i);
 	    const bool sendingData = true;
 	    const int dummyRecvCount = 0;
-	    (*parGrid)[localID]->getData(sendingData,it->first,dummyRecvCount,dummyRecvCount,blockLengths+counter*N_dataElements,displacements+counter*N_dataElements,&type);
+	    (*parGrid)[localID]->getData(sendingData,it->first,dummyRecvCount,dummyRecvCount,blockLengths+counter*N_dataElements,
+					 displacements+counter*N_dataElements,types+counter*N_dataElements);
 	    ++counter;
 	 }
-	       
+
 	 // Create MPI datatype for sending all data at once to process jt->first.
-	 // sum_sends is the total number of datatypes committed (summed over all processes):
-	 jt->second.sends.push_back(TypeWrapper());
-	 MPI_Type_create_hindexed(N_sends,blockLengths,displacements,type,&(jt->second.sends.back().type));
-	 MPI_Type_commit(&(jt->second.sends.back().type));
-	 ++info->second.N_sends;
-	 
+	 // A send is inserted only if there are data to send:
+	 if (N_sends > 0) {
+	    jt->second.sends.push_back(TypeWrapper());
+	    MPI_Type_create_struct(N_sends,blockLengths,displacements,types,&(jt->second.sends.back().type));
+	    MPI_Type_commit(&(jt->second.sends.back().type));
+	    ++info->second.N_sends;
+	 }
 	 delete [] blockLengths; blockLengths = NULL;
 	 delete [] displacements; displacements = NULL;
 	 delete [] types; types = NULL;
@@ -1730,7 +1742,7 @@ namespace pargrid {
    bool ParGrid<C>::checkPartitioningStatus(int& counter) const {
       #ifndef NDEBUG
          if (counter > partitioningCounter) {
-	    std::cerr << "(PARGRID) ERROR: User-given counter value '" << counter << "' is invalid!" << std::endl;
+	    std::cerr << "(PARGRID) ERROR: User-given counter value '" << counter << "' is invalid in checkPartitioningStatus!" << std::endl;
 	 }
       #endif
       bool rvalue = false;
