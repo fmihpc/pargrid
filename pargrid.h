@@ -33,9 +33,9 @@ namespace pargrid {
    typedef unsigned int CellID;                     /**< Datatype used for global cell IDs.*/
    typedef int MPI_processID;                       /**< Datatype MPI uses for process IDs.*/
    typedef unsigned char NeighbourID;               /**< Datatype ParGrid uses for neighbour type IDs.*/
-   typedef unsigned int StencilID;
-   typedef unsigned int TransferID;
-   typedef unsigned int DataID;
+   typedef unsigned int StencilID;                  /**< Datatype ParGrid uses for stencil IDs.*/
+   typedef unsigned int TransferID;                 /**< Datatype ParGrid uses for (data) transfer IDs.*/
+   typedef unsigned int DataID;                     /**< Datatype ParGrid uses for user-defined array IDs.*/
 
    enum InputParameter {
       cellWeightScale,                              /**< Value used for cell weights.*/
@@ -145,7 +145,7 @@ namespace pargrid {
       unsigned int N_elements;       /**< How many values are reserved per cell.*/
       ParGrid<C>* pargrid;           /**< Pointer to ParGrid class that owns this UserDataWrapper.*/
     private:
-      MPI_Datatype basicDatatype;
+      MPI_Datatype basicDatatype;    /**< MPI derived datatype that transfers data on a single cell.*/
    };
    
    // ***** PARCELL *****
@@ -212,7 +212,7 @@ namespace pargrid {
 	 int N_sends;             /**< Total number of messages sent during this transfer.*/
 	 bool typeVolatile;       /**< If true, MPI Datatypes need to be recalculated every time 
 				   * this transfer is started.*/
-	 DataID userDataID;
+	 DataID userDataID;       /**< ID of user-defined array. Valid if this transfer synchronizes a user-defined array.*/
 	 bool started;            /**< If true, this transfer has started and MPI requests are valid.*/
 	 MPI_Request* requests;   /**< MPI requests associated with this transfer.*/
       };
@@ -278,6 +278,8 @@ namespace pargrid {
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
       char* getUserData(DataID userDataID);
       char* getUserData(const std::string& name);
+      void getUserDataIDs(std::vector<DataID>& userDataIDs) const;
+      bool getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const;
       bool getUserDatatype(TransferID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
       bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
       int initPartitioningCounter() const;
@@ -336,7 +338,7 @@ namespace pargrid {
 									   * zero missing neighbours. This list is recalculated only when needed.*/      
       CellWeight cellWeight;                                              /**< Cell weight scale, used to calculate cell weights for Zoltan.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
-      
+
       std::vector<ParCell<C> > cells;                                     /**< Local cells stored on this process, followed by remote cells.*/
       std::vector<CellID> globalIDs;                                      /**< Global IDs of cells stored in vector cells.*/
       CellID N_localCells;                                                /**< Number of local cells on this process.*/
@@ -347,9 +349,9 @@ namespace pargrid {
 									   not have local copies.*/
       std::vector<uint32_t> neighbourFlags;                               /**< Neighbour existence flags for local cells.*/
       std::vector<NeighbourID> cellNeighbourTypes;                        /**< Neighbour type IDs of cells' neighbours.*/
-      std::vector<UserDataWrapper<C> > userData;
-      std::set<unsigned int> userDataHoles;
-      
+      std::vector<UserDataWrapper<C> > userData;                          /**< User-defined data arrays.*/
+      std::set<unsigned int> userDataHoles;                               /**< List of holes in userData.*/
+
       MPI_Comm comm;                                                      /**< MPI communicator used by ParGrid.*/
       CellWeight edgeWeight;                                              /**< Edge weight scale, used to calculate edge weights for Zoltan.*/
       bool edgeWeightsUsed;                                               /**< If true, edge weights are calculated.*/
@@ -493,8 +495,8 @@ namespace pargrid {
       this->byteSize = byteSize;
       this->N_elements = N_elements;
       this->N_cells = N_cells;
-      array = new char[N_cells*byteSize];
-
+      array = new char[N_cells*N_elements*byteSize];
+      
       // Create an MPI datatype that transfers a single array element. This makes 
       // it possible to address larger memory spaces.
       MPI_Type_contiguous(N_elements*byteSize,MPI_Type<char>(),&basicDatatype);
@@ -598,16 +600,13 @@ namespace pargrid {
    bool Stencil<C>::addUserDataTransfer(DataID userDataID,TransferID transferID,bool recalculate) {
       if (initialized == false) return false;
       if (typeCaches.find(transferID) != typeCaches.end()) {
-	 std::cerr << "Stencil addUserDataTransfer transferID: " << transferID << " already exists" << std::endl;
 	 return false;
       }
-      std::cerr << "Stencil addUserDataTransfer called, userDataID:" << userDataID << " transferID: " << transferID << std::endl;
       typeCaches[transferID];
       typeInfo[transferID].typeVolatile = recalculate;
       typeInfo[transferID].requests = NULL;
       typeInfo[transferID].started = false;
       typeInfo[transferID].userDataID = userDataID;
-      std::cerr << "Stencil addUserDataTransfer calcTypeCache" << std::endl;
       calcTypeCache(transferID);
       return true;
    }
@@ -713,7 +712,6 @@ namespace pargrid {
 	    // Get displacements from cells receiving data:
 	    int counter = 0;
 	    C dummy;
-	    std::cerr << "STENCIL calling getDataElements with ID=" << transferID << std::endl;
 	    const unsigned int N_dataElements = dummy.getDataElements(transferID);
 	    for (std::set<CellID>::const_iterator i=recvs[jt->first].begin(); i!=recvs[jt->first].end(); ++i) {
 	       const CellID localID = parGrid->getLocalID(*i);
@@ -2229,6 +2227,25 @@ namespace pargrid {
 	 if (userData[i].name == name) return userData[i].array;
       }
       return NULL;
+   }
+   
+   template<class C>
+   void ParGrid<C>::getUserDataIDs(std::vector<DataID>& userDataIDs) const {
+      userDataIDs.clear();
+      for (size_t i=0; i<userData.size(); ++i) {
+	 if (userData[i].array == NULL) continue;
+	 userDataIDs.push_back(i);
+      }
+   }
+   
+   template<class C>
+   bool ParGrid<C>::getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const {
+      if (userDataID >= userData.size() || userDataHoles.find(userDataID) != userDataHoles.end()) return false;
+      name = userData[userDataID].name;
+      byteSize = userData[userDataID].byteSize;
+      N_elements = userData[userDataID].N_elements;
+      ptr = userData[userDataID].array;
+      return true;
    }
    
    template<class C>
