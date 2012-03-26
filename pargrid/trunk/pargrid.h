@@ -81,6 +81,7 @@ namespace pargrid {
    const size_t N_neighbours = 27;                  /**< Number of neighbours reserved each parallel cell has (including the cell itself).*/
    const uint32_t ALL_NEIGHBOURS_EXIST = 134217728 - 1; /**< If a cell's neighbour flags field equals this value all its 
 							 * neighbours exist, i.e. the cell is an inner cell.*/
+   const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-10;  /**< Default cell weight (measures computational load).*/
    
    // Forward declaration of ParGrid, required for declarations of 
    // auxiliary structs below.
@@ -279,6 +280,7 @@ namespace pargrid {
       bool finalize();
       const std::vector<CellID>& getBoundaryCells(StencilID stencilID) const;
       CellID* getCellNeighbourIDs(CellID cellID);
+      std::vector<CellWeight>& getCellWeights();
       MPI_Comm getComm() const;
       std::vector<CellID>& getExteriorCells();
       const std::vector<CellID>& getGlobalIDs() const;
@@ -355,6 +357,7 @@ namespace pargrid {
       std::vector<CellID> interiorCells;                                  /**< List of interior cells on this process, i.e. cells with 
 									   * zero missing neighbours. This list is recalculated only when needed.*/      
       CellWeight cellWeight;                                              /**< Cell weight scale, used to calculate cell weights for Zoltan.*/
+      std::vector<CellWeight> cellWeights;                                /**< Computational load of each local cell.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
 
       std::vector<ParCell<C> > cells;                                     /**< Local cells stored on this process, followed by remote cells.*/
@@ -2095,6 +2098,11 @@ namespace pargrid {
       return &(cellNeighbours[localID*N_neighbours]);
    }
    
+   /** Get array containing cell weights that are used in load balancing.
+    * @return Vector containing cell weights, indexed with local IDs.*/
+   template<class C>
+   std::vector<CellWeight>& ParGrid<C>::getCellWeights() {return cellWeights;}
+   
    template<class C>
    MPI_Comm ParGrid<C>::getComm() const {return comm;}
    
@@ -2458,6 +2466,16 @@ namespace pargrid {
       recalculateExteriorCells = true;
       for (typename std::map<StencilID,Stencil<C> >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
 	 it->second.update();
+      }
+      
+      // Reset size of vector cellWeights to N_localCells:
+	{
+	   std::vector<CellWeight> newCellWeights;
+	   cellWeights.swap(newCellWeights);
+	}
+      if (cellWeightsUsed == true) {
+	 cellWeights.resize(N_localCells);
+	 for (size_t i=0; i<cellWeights.size(); ++i) cellWeights[i] = DEFAULT_CELL_WEIGHT;
       }
    }
    
@@ -2938,7 +2956,7 @@ namespace pargrid {
 	       // Copy neighbour global ID and host process ID:
 	       nbrGlobalIDs[counter] = this->globalIDs[nbrLID];
 	       nbrHosts[counter]     = hosts[nbrLID];
-	       edgeWeights[counter]  = edgeWeight*cells[nbrLID].userData.getWeight();
+	       edgeWeights[counter]  = edgeWeight;
 	       ++counter;
 	    }
 	 }	 
@@ -3098,7 +3116,7 @@ namespace pargrid {
       if (edgeWeightsUsed == true) {
 	 for (CellID i=0; i<N_localCells; ++i) {
 	    edgeGlobalID[counter] = globalIDs[i];
-	    edgeWeights[counter]  = edgeWeight * cells[i].userData.getWeight();
+	    edgeWeights[counter]  = edgeWeight;
 	    ++counter;
 	 }
       } else {
@@ -3140,7 +3158,7 @@ namespace pargrid {
 	 for (CellID i=0; i<N_localCells; ++i) {
 	    globalIDs[counter]   = this->globalIDs[i];
 	    localIDs[counter]    = i;
-	    cellWeights[counter] = cells[i].userData.getWeight();
+	    cellWeights[counter] = this->cellWeights[i];
 	    ++counter;
 	 }
       } else {
