@@ -199,6 +199,7 @@ namespace pargrid {
       const std::vector<CellID>& getBoundaryCells() const;
       const std::vector<CellID>& getInnerCells() const;
       bool initialize(ParGrid<C>& pargrid,StencilType stencilType,const std::vector<NeighbourID>& receives);
+      bool removeUserDataTransfers(DataID userDataID);
       bool removeTransfer(TransferID transferID);
       bool startTransfer(TransferID transferID);
       bool update();
@@ -276,7 +277,6 @@ namespace pargrid {
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
       NeighbourID calcNeighbourTypeID(int i_off,int j_off,int k_off) const;
       bool checkPartitioningStatus(int& counter) const;
-      bool deleteUserData(DataID userDataID);
       bool finalize();
       const std::vector<CellID>& getBoundaryCells(StencilID stencilID) const;
       CellID* getCellNeighbourIDs(CellID cellID);
@@ -310,6 +310,8 @@ namespace pargrid {
       TransferID invalidTransferID() const;
       bool localCellExists(CellID cellID);
       C* operator[](const CellID& cellID);
+      bool removeDataTransfer(StencilID stencilID,TransferID transferID);
+      bool removeUserData(DataID userDataID);
       bool setPartitioningMode(PartitioningMode pm);
       bool startNeighbourExchange(StencilID stencilID,TransferID transferID);
       bool wait(StencilID stencilID,TransferID transferID);
@@ -370,7 +372,7 @@ namespace pargrid {
 									   not have local copies.*/
       std::vector<uint32_t> neighbourFlags;                               /**< Neighbour existence flags for local cells.*/
       std::vector<NeighbourID> cellNeighbourTypes;                        /**< Neighbour type IDs of cells' neighbours.*/
-      std::vector<UserDataWrapper<C> > userData;                          /**< User-defined data arrays.*/
+      std::vector<UserDataWrapper<C>*> userData;                          /**< User-defined data arrays.*/
       std::set<unsigned int> userDataHoles;                               /**< List of holes in userData.*/
 
       MPI_Comm comm;                                                      /**< MPI communicator used by ParGrid.*/
@@ -884,6 +886,29 @@ namespace pargrid {
       typeInfo.erase(transferID);
       return true;
    }
+
+   /** Remove all transfers in this Stencil associated with the given user data array.
+    * @param userDataID ID number of the user data array.
+    * @return If true, all transfers were removed successfully.*/
+   template<class C>
+   bool Stencil<C>::removeUserDataTransfers(DataID userDataID) {
+      // Iterate over all entries in typeInfo. If a transfer exists and 
+      // is associated with the given userDataID, erase it from typeInfo 
+      // and typeCaches:
+      typename std::map<TransferID,TypeInfo>::iterator it=typeInfo.begin();
+      while (it != typeInfo.end()) {
+	 if (it->second.userDataID == userDataID) {
+	    typename std::map<TransferID,TypeInfo>::iterator tmp = it;
+	    ++tmp;
+	    typeCaches.erase(it->first);
+	    typeInfo.erase(it);
+	    it = tmp;
+	    continue;
+	 }
+	 ++it;
+      }
+      return true;
+   }
    
    template<class C>
    bool Stencil<C>::startTransfer(TransferID transferID) {
@@ -1124,21 +1149,20 @@ namespace pargrid {
    DataID ParGrid<C>::addUserData(std::string& name,unsigned int N_elements) {
       // Check that a user data array with the given name doesn't already exist:
       for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i].name == name) return invalidDataID();
+	 if (userData[i]->name == name) return invalidDataID();
       }
       
-      //unsigned int userDataID = std::numeric_limits<DataID>::max();
       unsigned int userDataID = invalidDataID();
       if (userDataHoles.size() > 0) {
 	 userDataID = *userDataHoles.begin();
 	 userDataHoles.erase(userDataID);
       } else {
-	 userData.push_back(UserDataWrapper<C>());
+	 userData.push_back(new UserDataWrapper<C>());
 	 userDataID = userData.size()-1;
       }
       
       // Add a new user data array:
-      userData[userDataID].initialize(this,name,cells.size(),N_elements,sizeof(T));
+      userData[userDataID]->initialize(this,name,cells.size(),N_elements,sizeof(T));
       return userDataID;
    }
    
@@ -1153,7 +1177,8 @@ namespace pargrid {
    template<class C>
    bool ParGrid<C>::addUserDataTransfer(DataID userDataID,StencilID stencilID,TransferID transferID,bool recalculate) {
       if (getInitialized() == false) return false;
-       if (userDataID >= userData.size() || userDataHoles.find(userDataID) != userDataHoles.end()) return false;
+      if (userDataID >= userData.size()) return false;
+      if (userData[userDataID] == NULL) return false;
       typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
       if (it == stencils.end()) return false;
       return it->second.addUserDataTransfer(userDataID,transferID,recalculate);
@@ -2050,14 +2075,6 @@ namespace pargrid {
       return rvalue;
    }
    
-   template<class C>
-   bool ParGrid<C>::deleteUserData(DataID userDataID) {
-      if (userDataID >= userData.size()) return false;
-      if (userDataHoles.find(userDataID) != userDataHoles.end()) return false;
-      userDataHoles.insert(userDataID);
-      return userData[userDataID].finalize();
-   }
-   
    /** Finalize ParGrid. After this function returns ParGrid cannot be used 
     * without re-initialisation.
     * @return If true, ParGrid finalized successfully.*/
@@ -2067,6 +2084,14 @@ namespace pargrid {
       initialized = false;
       stencils.clear();
       delete zoltan; zoltan = NULL;
+      
+      // Deallocate user data:
+      for (size_t i=0; i<userData.size(); ++i) {
+	 if (userData[i] == NULL) continue;
+	 userData[i]->finalize();
+	 delete userData[i]; userData[i] = NULL;
+      }
+      
       return true;
    }
    
@@ -2243,8 +2268,9 @@ namespace pargrid {
    
    template<class C>
    char* ParGrid<C>::getUserData(DataID userDataID) {
-      if (userDataID >= userData.size() || userDataHoles.find(userDataID) != userDataHoles.end()) return NULL;
-      return userData[userDataID].array;
+      if (userDataID >= userData.size()) return NULL;
+      if (userData[userDataID] == NULL) return NULL;
+      return userData[userDataID]->array;
    }
    
    template<class C>
@@ -2266,7 +2292,8 @@ namespace pargrid {
    
    template<class C>
    bool ParGrid<C>::getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const {
-      if (userDataID >= userData.size() || userDataHoles.find(userDataID) != userDataHoles.end()) return false;
+      if (userDataID >= userData.size()) return false;
+      if (userData[userDataID] == NULL) return false;
       name = userData[userDataID].name;
       byteSize = userData[userDataID].byteSize;
       N_elements = userData[userDataID].N_elements;
@@ -2276,8 +2303,9 @@ namespace pargrid {
    
    template<class C>
    bool ParGrid<C>::getUserDatatype(DataID userDataID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil) {
-      if (userDataID >= userData.size() || userDataHoles.find(userDataID) != userDataHoles.end()) return false;
-      userData[userDataID].getDatatype(globalIDs,datatype);
+      if (userDataID >= userData.size()) return false;
+      if (userData[userDataID] == NULL) return false;
+      userData[userDataID]->getDatatype(globalIDs,datatype);
       return true;
    }
    
@@ -2504,6 +2532,39 @@ namespace pargrid {
       #endif
       return &(cells[localID].userData);
    }
+
+   /** Remove a data transfer that has been previously associated with the given Stencil.
+    * @param stencilID ID of the Stencil.
+    * @param transferID ID of the transfer.
+    * @return If true, the transfer was removed successfully.*/
+   template<class C>
+   bool ParGrid<C>::removeDataTransfer(StencilID stencilID,TransferID transferID) {
+      if (getInitialized() == false) return false;
+      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
+      if (it == stencils.end()) return false;
+      return it->second.removeTransfer(transferID);
+   }
+   
+   /** Remove a user data array that has been previously allocated with addUserData.
+    * @param userDataID ID number of the user data array, as returned by addUserData.
+    * @return If true, the user data array was removed successfully.
+    * @see addUserData.*/
+   template<class C>
+   bool ParGrid<C>::removeUserData(DataID userDataID) {
+      if (userDataID >= userData.size()) return false;
+      if (userDataHoles.find(userDataID) != userDataHoles.end()) return false;
+      
+      // Remove transfers associated with this user data array. Note that 
+      // we do not know transferID(s) associated with this userDataID:
+      for (typename std::map<StencilID,Stencil<C> >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
+	 it->second.removeUserDataTransfers(userDataID);
+      }
+      
+      userDataHoles.insert(userDataID);
+      userData[userDataID]->finalize();
+      delete userData[userDataID]; userData[userDataID] = NULL;
+      return true;
+   }
    
    template<class C>
    bool ParGrid<C>::repartitionUserData(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
@@ -2528,10 +2589,11 @@ namespace pargrid {
             
       // Allocate a temporary container for new user data. Each array is 
       // initialized to correct size, N_cells = local + remote cells:
-      std::vector<UserDataWrapper<C> > newUserData(userData.size());
+      std::vector<UserDataWrapper<C>*> newUserData(userData.size());
       for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i].array == NULL) continue;
-	 newUserData[i].initialize(this,userData[i].name,N_cells,userData[i].N_elements,userData[i].byteSize);
+	 if (userData[i] == NULL) {newUserData[i] = NULL; continue;}
+	 newUserData[i] = new UserDataWrapper<C>();
+	 newUserData[i]->initialize(this,userData[i]->name,N_cells,userData[i]->N_elements,userData[i]->byteSize);
       }
 
       // Allocate enough send and recv requests:
@@ -2547,11 +2609,11 @@ namespace pargrid {
       counter = 0;
       size_t requestCounter = 0;
       for (size_t data=0; data<newUserData.size(); ++data) {
-	 if (newUserData[data].array == NULL) continue;
+	 if (newUserData[data] == NULL) continue;
 	 std::map<MPI_processID,MPI_Datatype> importDatatypes;
 
 	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = newUserData[data].N_elements*newUserData[data].byteSize;
+	 const int byteSize = newUserData[data]->N_elements*newUserData[data]->byteSize;
 	 MPI_Datatype basicDatatype;
 	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
 	 MPI_Type_commit(&basicDatatype);
@@ -2576,7 +2638,7 @@ namespace pargrid {
 	 for (std::map<MPI_processID,MPI_Datatype>::iterator it=importDatatypes.begin(); it!=importDatatypes.end(); ++it) {
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
-	    void* buffer               = newUserData[data].array;
+	    void* buffer               = newUserData[data]->array;
 	    MPI_Irecv(buffer,1,it->second,source,tag,comm,&(recvRequests[requestCounter]));
 	    ++requestCounter;
 	 }
@@ -2592,11 +2654,11 @@ namespace pargrid {
       // Send user-defined data to export processes:
       requestCounter = 0;
       for (size_t data=0; data<userData.size(); ++data) {
-	 if (userData[data].array == NULL) continue;
+	 if (userData[data] == NULL) continue;
 	 std::map<MPI_processID,std::vector<int> > displacements;
 	 
 	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = userData[data].N_elements*userData[data].byteSize;
+	 const int byteSize = userData[data]->N_elements*userData[data]->byteSize;
 	 MPI_Datatype basicDatatype;
 	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
 	 MPI_Type_commit(&basicDatatype);
@@ -2607,7 +2669,7 @@ namespace pargrid {
 	       displacements[it->first].push_back(it->second[j]);
 	    }
 	    
-	    void* buffer       = userData[data].array;
+	    void* buffer       = userData[data]->array;
 	    MPI_processID dest = it->first;
 	    const int tag      = getRank();
 	    
@@ -2625,11 +2687,11 @@ namespace pargrid {
       
       // Copy data remaining on this process to newUserData:
       for (size_t data=0; data<userData.size(); ++data) {
-	 if (userData[data].array == NULL) continue;
+	 if (userData[data] == NULL) continue;
 	 counter = 0;
 	 for (CellID cell=0; cell<N_localCells; ++cell) {
 	    if (hosts[cell] != getRank()) continue;
-	    newUserData[data].copy(userData[data],counter,cell);
+	    newUserData[data]->copy(*userData[data],counter,cell);
 	    ++counter;
 	 }
       }
@@ -2640,6 +2702,14 @@ namespace pargrid {
 
       // Swap newUserData and userData:
       userData.swap(newUserData);
+      
+      // Deallocate old user data:
+      for (size_t i=0; i<newUserData.size(); ++i) {
+	 if (newUserData[i] == NULL) continue;
+	 newUserData[i]->finalize();
+	 delete newUserData[i]; newUserData[i] = NULL;
+      }
+      
       return true;
    }
 
