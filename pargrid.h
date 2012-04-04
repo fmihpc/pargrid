@@ -188,6 +188,8 @@ namespace pargrid {
 
    // ***** STENCIL *****
    
+   /** Class used to calculate send and receive lists for user-defined stencils in ParGrid. 
+    * This class does most of the dirty work related to transferring data with MPI.*/
    template<class C>
    struct Stencil {
     public:
@@ -269,7 +271,8 @@ namespace pargrid {
       std::map<CellID,std::set<MPI_processID> > recvCounts;        /**< For each local cell, identified by global ID, ranks of remote 
 								    * processes whom to receive an update from. This map is only 
 								    * used for stencilType remoteToLocalUpdates.*/
-      std::map<DataID,RecvBuffer*> recvBuffers;
+      std::map<DataID,RecvBuffer*> recvBuffers;                    /**< Receive buffers for StencilType::remoteToLocalUpdates. These 
+								    * are allocated only when needed.*/
    };
 
    // ***** PARGRID *****
@@ -288,7 +291,7 @@ namespace pargrid {
       bool addCellFinished();
       StencilID addStencil(pargrid::StencilType stencilType,const std::vector<NeighbourID>& recvNbrTypeIDs);
       bool addTransfer(StencilID stencilID,TransferID transferID,bool recalculate);
-      template<typename T> DataID addUserData(std::string& name,unsigned int N_elements);
+      template<typename T> DataID addUserData(const std::string& name,unsigned int N_elements);
       bool addUserDataTransfer(DataID userDataID,StencilID stencilID,TransferID transferID,bool recalculate);
       bool balanceLoad();
       void barrier() const;
@@ -618,6 +621,7 @@ namespace pargrid {
    template<class C>
    Stencil<C>::RecvBuffer::RecvBuffer(): offsetsSize(0),bufferSize(0),elementSize(0),offsets(NULL),buffer(NULL) { }
 
+   /** RecvBuffer copy-constructor. Allocates new offsets and buffer arrays.*/
    template<class C>
    Stencil<C>::RecvBuffer::RecvBuffer(const RecvBuffer& rbuffer) {
       offsetsSize = rbuffer.offsetsSize;
@@ -635,10 +639,12 @@ namespace pargrid {
       delete [] offsets; offsets = NULL;
       delete [] buffer; buffer = NULL;
    }
-   
+
+   /** Default constructor.*/
    template<class C>
    Stencil<C>::Stencil() { }
 
+   /** Destructor. Frees all MPI datatypes and deallocates arrays.*/
    template<class C>
    Stencil<C>::~Stencil() {
       // Delete MPI Requests:
@@ -652,6 +658,11 @@ namespace pargrid {
       }
    }
    
+   /** Add a transfer to Stencil.
+    * @param transfer ID number of the transfer.
+    * @param recalculate If true the associated MPI datatypes should be recalculated
+    * every time transfers are started.
+    * @return If true, transfer was added to Stencil successfully.*/
    template<class C>
    bool Stencil<C>::addTransfer(TransferID transferID,bool recalculate) {
       if (initialized == false) return false;
@@ -665,6 +676,12 @@ namespace pargrid {
       return true;
    }
    
+   /** Add a transfer for user-defined ParGrid data array.
+    * @param userDataID ID number of the user data array.
+    * @param transfer ID number of the transfer.
+    * @param recalculate If true the associated MPI datatypes should be recalculated 
+    * every time transfers are started.
+    * @return If true, transfer was added to Stencil successfully.*/
    template<class C>
    bool Stencil<C>::addUserDataTransfer(DataID userDataID,TransferID transferID,bool recalculate) {
       if (initialized == false) return false;
@@ -679,7 +696,9 @@ namespace pargrid {
       calcTypeCache(transferID);
       return true;
    }
-      
+
+   /** Calculate send and receive lists for this Stencil.
+    * @return If true, send and receive lists were calculated successfully.*/
    template<class C>
    bool Stencil<C>::calcLocalUpdateSendsAndReceives() {
       if (initialized == false) return false;
@@ -960,6 +979,7 @@ namespace pargrid {
       return true;
    }
 
+   /** Clear some of Stencil internal variables.*/
    template<class C>
    void Stencil<C>::clear() {
       boundaryCells.clear();
@@ -969,14 +989,25 @@ namespace pargrid {
       recvCounts.clear();
    }
    
+   /** Get boundary cell list for this Stencil.
+    * @return Vector containing boundary cell local IDs.*/
    template<class C>
    const std::vector<CellID>& Stencil<C>::getBoundaryCells() const {return boundaryCells;}
    
+   /** Get inner cell list for this Stencil.
+    * @return Vector containing inner cell local IDs.*/
    template<class C>
    const std::vector<CellID>& Stencil<C>::getInnerCells() const {return innerCells;}
    
+   /** Get offset and buffer array for given user-defined ParGrid data array. This 
+    * function should only be called for StencilType::remoteToLocalUpdates.
+    * @param userDataID ID number of the user-defined data array.
+    * @param offsets Address of offsets array is copied to this variable.
+    * @param buffer Address of receive buffer array is copied to this variable.
+    * @return If true, offsets and buffer variables contain valid values.*/
    template<class C>
    bool Stencil<C>::getRemoteUpdates(DataID userDataID,unsigned int*& offsets,char*& buffer) const {
+      if (stencilType != remoteToLocalUpdates) return false;
       typename std::map<DataID,RecvBuffer*>::const_iterator it = recvBuffers.find(userDataID);
       if (it == recvBuffers.end()) return false;
       offsets = it->second->offsets;
@@ -984,6 +1015,11 @@ namespace pargrid {
       return true;
    }
    
+   /** Initialize Stencil.
+    * @param parGrid Pointer to ParGrid.
+    * @param stencilType Type of the Stencil.
+    * @param receives List of received neighbours' type IDs.
+    * @return If true, Stencil initialized successfully.*/
    template<class C>
    bool Stencil<C>::initialize(ParGrid<C>& parGrid,StencilType stencilType,const std::vector<NeighbourID>& receives) {
       initialized = false;
@@ -1321,7 +1357,7 @@ namespace pargrid {
     * @return ID number of the new data array or invalidDataID() if array was not created.
     * @see addUserDataTransfer.*/
    template<class C> template<typename T>
-   DataID ParGrid<C>::addUserData(std::string& name,unsigned int N_elements) {
+   DataID ParGrid<C>::addUserData(const std::string& name,unsigned int N_elements) {
       // Check that a user data array with the given name doesn't already exist:
       for (size_t i=0; i<userData.size(); ++i) {
 	 if (userData[i] == NULL) continue;
