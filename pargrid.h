@@ -1368,6 +1368,7 @@ namespace pargrid {
       if (userDataHoles.size() > 0) {
 	 userDataID = *userDataHoles.begin();
 	 userDataHoles.erase(userDataID);
+	 userData[userDataID] = new UserDataWrapper<C>();
       } else {
 	 userData.push_back(new UserDataWrapper<C>());
 	 userDataID = userData.size()-1;
