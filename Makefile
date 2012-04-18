@@ -2,16 +2,20 @@
 ###               DO NOT EDIT                  ###
 
 # Distribution package name
+DIR=pargrid
 DIST=pargrid_v01_000.tar
 
 # Build targets
 
 clean:
-	rm -rf *~ *.tar.gz
+	rm -rf *~ *.tar *.tar.gz
 
 dist:
-	tar -rf ${DIST} Makefile
-	tar -rf ${DIST} COPYING
-	tar -rf ${DIST} *.h
-	tar -rf ${DIST} *.pdf
+
+	ln -s ${CURDIR} ${DIR}
+	tar -rf ${DIST} ${DIR}/Makefile
+	tar -rf ${DIST} ${DIR}/COPYING*
+	tar -rf ${DIST} ${DIR}/*.h
+	tar -rf ${DIST} ${DIR}/*.pdf
 	gzip -9 ${DIST}
+	rm ${DIR}
