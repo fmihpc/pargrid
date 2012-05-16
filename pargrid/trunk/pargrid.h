@@ -298,6 +298,7 @@ namespace pargrid {
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
       NeighbourID calcNeighbourTypeID(int i_off,int j_off,int k_off) const;
       bool checkPartitioningStatus(int& counter) const;
+      void clearCellWeights();
       bool finalize();
       const std::vector<CellID>& getBoundaryCells(StencilID stencilID) const;
       CellID* getCellNeighbourIDs(CellID cellID);
@@ -422,6 +423,7 @@ namespace pargrid {
          int profMPI;
          int profTotalLB;
          int profUserData;
+         int profDynamicData;
       #endif
       
       bool checkInternalStructures() const;
@@ -436,26 +438,26 @@ namespace pargrid {
    // *********************************************************** //
 
    /** Default constructor. Calls UserDataWrapper::finalize().*/
-   template<typename T>
+   template<typename T> inline
    UserDataWrapper<T>::UserDataWrapper() {array=NULL; basicDatatype=MPI_DATATYPE_NULL; finalize();}
    
    /** Copy-constructor. Calls UserDataWrapper::initialize and then copies the data.
     * @param udw UserDataWrapper whose copy is to be made.*/
-   template<typename T>
+   template<typename T> inline
    UserDataWrapper<T>::UserDataWrapper(const UserDataWrapper& udw) {
       initialize(const_cast<ParGrid<T>*>(udw.pargrid),udw.name,udw.N_cells,udw.N_elements,udw.byteSize);
       for (size_t i=0; i<N_cells*N_elements*byteSize; ++i) array[i] = udw.array[i];
    }
    
    /** Destructor. Calls UserDataWrapper::finalize().*/
-   template<typename T>
+   template<typename T> inline
    UserDataWrapper<T>::~UserDataWrapper() {finalize();}
 
    /** Copy data from given UserDataWrapper.
     * @param udw UserDataWrapper whose data is to be copied.
     * @param newCell Target cell in which data is written.
     * @param oldCell Source cell in udw in which data is read.*/
-   template<typename T>
+   template<typename T> inline
    void UserDataWrapper<T>::copy(const UserDataWrapper& udw,CellID newCell,CellID oldCell) {
       for (unsigned int i=0; i<N_elements*byteSize; ++i) 
 	array[newCell*N_elements*byteSize+i] = udw.array[oldCell*N_elements*byteSize+i];
@@ -463,7 +465,7 @@ namespace pargrid {
    
    /** Deallocates UserDataWrapper::array and sets internal variables to dummy values.
     * @return If true, finalization completed successfully.*/
-   template<typename T>
+   template<typename T> inline
    bool UserDataWrapper<T>::finalize() {
       //if (basicDatatype != MPI_DATATYPE_NULL) MPI_Type_free(&basicDatatype);
       byteSize = 0;
@@ -477,14 +479,14 @@ namespace pargrid {
 
    /** Get a pointer to UserDataWrapper::array.
     * @return Pointer to user data array. NULL value is returned for uninitialized array.*/
-   template<typename T>
+   template<typename T> inline
    void* UserDataWrapper<T>::getAddress() {return array;}
 
    /** Get a derived MPI datatype that will transfer all the given cells with a single send (or receive).
     * This function calls MPI_Type_commit for the newly created datatype, MPI_Type_free must be called elsewhere.
     * @param globalIDs Global IDs of the cells.
     * @param datatype Variable in which the derived datatype is to be written.*/
-   template<typename T>
+   template<typename T> inline
    void UserDataWrapper<T>::getDatatype(const std::set<CellID>& globalIDs,MPI_Datatype& datatype) {
       // For each global ID, get the corresponding local ID (=index into array) and 
       // store its offset relative to memory address MPI_BOTTOM:
@@ -510,7 +512,7 @@ namespace pargrid {
     * @param cellIDs List of (global ID, localID) pairs of transferred cells.
     * @param disps Array in which calculated array displacements are to be stored.
     * @param datatype Variable in which the derived datatype is to be written.*/
-   template<typename T>
+   template<typename T> inline
    void UserDataWrapper<T>::getDatatype(const std::map<CellID,CellID>& cellIDs,int* disps,MPI_Datatype& datatype) {
       // For each (globalID,localID) pair store the offset (relative to MPI_BOTTOM) into array to disps:
       size_t counter = 0;
@@ -535,7 +537,7 @@ namespace pargrid {
     * @param N_elements How many values of byte size byteSize are allocated per cell. This makes it 
     * possible to allocate, say, five doubles per cell.
     * @param byteSize Byte size of single value, i.e. sizeof(double) for doubles.*/
-   template<typename T>
+   template<typename T> inline
    void UserDataWrapper<T>::initialize(ParGrid<T>* pargrid,const std::string& name,size_t N_cells,unsigned int N_elements,unsigned int byteSize) {
       this->pargrid = pargrid;
       this->name = name;
@@ -554,28 +556,28 @@ namespace pargrid {
    // ***** PARCELL TEMPLATE FUNCTION DEFINITIONS *****
    // *************************************************
    
-   template<class C>
+   template<class C> inline
    ParCell<C>::ParCell() { }
    
-   template<class C>
+   template<class C> inline
    ParCell<C>::~ParCell() { }
 
-   template<class C>
+   template<class C> inline
    void ParCell<C>::getData(bool sending,TransferID ID,int receivesPosted,int receiveCount,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types) {
       userData.getData(sending,ID,receivesPosted,receiveCount,blockLengths,displacements,types);
    }
    
-   template<class C>
+   template<class C> inline
    unsigned int ParCell<C>::getDataElements(TransferID ID) const {
       return userData.getDataElements(ID);
    }
    
-   template<class C>
+   template<class C> inline
    void ParCell<C>::getMetadata(TransferID ID,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types) {
       userData.getMetadata(ID,blockLengths,displacements,types);
    }
    
-   template<class C>
+   template<class C> inline
    unsigned int ParCell<C>::getMetadataElements(TransferID ID) const {
       return userData.getMetadataElements(ID);
    }
@@ -585,13 +587,13 @@ namespace pargrid {
    // *************************************************
 
    /** Default constructor for TypeWrapper. Sets type to MPI_DATATYPE_NULL.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::TypeWrapper::TypeWrapper(): type(MPI_DATATYPE_NULL) { }
    
    /** Copy-constructor for TypeWrapper. Makes a copy of MPI datatype with 
     * MPI_Type_dup unless the given datatype is MPI_DATATYPE_NULL.
     * @param tw TypeWrapper to be copied.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::TypeWrapper::TypeWrapper(const Stencil<C>::TypeWrapper& tw) {
       if (tw.type != MPI_DATATYPE_NULL) MPI_Type_dup(tw.type,&type);
       else type = MPI_DATATYPE_NULL;
@@ -599,7 +601,7 @@ namespace pargrid {
    
    /** Destructor for TypeWrapper. Frees the MPI datatype with MPI_Type_free 
     * unless the datatype is MPI_DATATYPE_NULL.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::TypeWrapper::~TypeWrapper() {
       if (type != MPI_DATATYPE_NULL) MPI_Type_free(&type);
    }
@@ -609,7 +611,7 @@ namespace pargrid {
     * the current datatype with MPI_DATATYPE_NULL if necessary.
     * @param tw TypeWrapper to make copy of.
     * @return Reference to this TypeWrapper.*/
-   template<class C>
+   template<class C> inline
    typename Stencil<C>::TypeWrapper& Stencil<C>::TypeWrapper::operator=(const Stencil<C>::TypeWrapper& tw) {
       if (type != MPI_DATATYPE_NULL) MPI_Type_free(&type);
       if (tw.type == MPI_DATATYPE_NULL) type = MPI_DATATYPE_NULL;
@@ -618,11 +620,11 @@ namespace pargrid {
    }
 
    /** Default constructor for RecvBuffer. Sets array pointers to NULL.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::RecvBuffer::RecvBuffer(): offsetsSize(0),bufferSize(0),elementSize(0),offsets(NULL),buffer(NULL) { }
 
    /** RecvBuffer copy-constructor. Allocates new offsets and buffer arrays.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::RecvBuffer::RecvBuffer(const RecvBuffer& rbuffer) {
       offsetsSize = rbuffer.offsetsSize;
       bufferSize = rbuffer.offsetsSize;
@@ -634,18 +636,18 @@ namespace pargrid {
    }
    
    /** Destructor for RecvBuffer. Calls delete for arrays.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::RecvBuffer::~RecvBuffer() {
       delete [] offsets; offsets = NULL;
       delete [] buffer; buffer = NULL;
    }
 
    /** Default constructor.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::Stencil() { }
 
    /** Destructor. Frees all MPI datatypes and deallocates arrays.*/
-   template<class C>
+   template<class C> inline
    Stencil<C>::~Stencil() {
       // Delete MPI Requests:
       for (typename std::map<unsigned int,TypeInfo>::iterator i=typeInfo.begin(); i!=typeInfo.end(); ++i) {
@@ -663,7 +665,7 @@ namespace pargrid {
     * @param recalculate If true the associated MPI datatypes should be recalculated
     * every time transfers are started.
     * @return If true, transfer was added to Stencil successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::addTransfer(TransferID transferID,bool recalculate) {
       if (initialized == false) return false;
       if (typeCaches.find(transferID) != typeCaches.end()) return false;
@@ -682,7 +684,7 @@ namespace pargrid {
     * @param recalculate If true the associated MPI datatypes should be recalculated 
     * every time transfers are started.
     * @return If true, transfer was added to Stencil successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::addUserDataTransfer(DataID userDataID,TransferID transferID,bool recalculate) {
       if (initialized == false) return false;
       if (typeCaches.find(transferID) != typeCaches.end()) {
@@ -699,7 +701,7 @@ namespace pargrid {
 
    /** Calculate send and receive lists for this Stencil.
     * @return If true, send and receive lists were calculated successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::calcLocalUpdateSendsAndReceives() {
       if (initialized == false) return false;
       bool success = true;
@@ -749,7 +751,7 @@ namespace pargrid {
    /** Calculate MPI datatype cache for given transfer identifier.
     * @param ID Transfer ID whose cache is to be (re)calculated.
     * @return If true, cache was (re)calculated successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::calcTypeCache(TransferID transferID) {
       typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
       if (info == typeInfo.end()) return false;
@@ -980,7 +982,7 @@ namespace pargrid {
    }
 
    /** Clear some of Stencil internal variables.*/
-   template<class C>
+   template<class C> inline
    void Stencil<C>::clear() {
       boundaryCells.clear();
       innerCells.clear();
@@ -991,12 +993,12 @@ namespace pargrid {
    
    /** Get boundary cell list for this Stencil.
     * @return Vector containing boundary cell local IDs.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& Stencil<C>::getBoundaryCells() const {return boundaryCells;}
    
    /** Get inner cell list for this Stencil.
     * @return Vector containing inner cell local IDs.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& Stencil<C>::getInnerCells() const {return innerCells;}
    
    /** Get offset and buffer array for given user-defined ParGrid data array. This 
@@ -1005,7 +1007,7 @@ namespace pargrid {
     * @param offsets Address of offsets array is copied to this variable.
     * @param buffer Address of receive buffer array is copied to this variable.
     * @return If true, offsets and buffer variables contain valid values.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::getRemoteUpdates(DataID userDataID,unsigned int*& offsets,char*& buffer) const {
       if (stencilType != remoteToLocalUpdates) return false;
       typename std::map<DataID,RecvBuffer*>::const_iterator it = recvBuffers.find(userDataID);
@@ -1020,7 +1022,7 @@ namespace pargrid {
     * @param stencilType Type of the Stencil.
     * @param receives List of received neighbours' type IDs.
     * @return If true, Stencil initialized successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::initialize(ParGrid<C>& parGrid,StencilType stencilType,const std::vector<NeighbourID>& receives) {
       initialized = false;
       this->parGrid = &parGrid;
@@ -1053,7 +1055,7 @@ namespace pargrid {
    /** Remove transfer with given identifier from Stencil.
     * @param ID Identifier of the removed transfer.
     * @return If true, transfer was removed successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::removeTransfer(TransferID transferID) {
       // Check that transfer exists:
       if (initialized == false) return false;
@@ -1068,7 +1070,7 @@ namespace pargrid {
    /** Remove all transfers in this Stencil associated with the given user data array.
     * @param userDataID ID number of the user data array.
     * @return If true, all transfers were removed successfully.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::removeUserDataTransfers(DataID userDataID) {
       // Iterate over all entries in typeInfo. If a transfer exists and 
       // is associated with the given userDataID, erase it from typeInfo 
@@ -1095,7 +1097,7 @@ namespace pargrid {
       return true;
    }
    
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::startTransfer(TransferID transferID) {
       typename std::map<TransferID,std::map<MPI_processID,TypeCache> >::iterator it = typeCaches.find(transferID);
       typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
@@ -1152,7 +1154,7 @@ namespace pargrid {
       return true;
    }
    
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::update() {
       if (initialized == false) return false;
       
@@ -1177,7 +1179,7 @@ namespace pargrid {
     * @param ID Identifier of the transfer.
     * @return If true, transfer has been completed successfully. Value false 
     * may also mean that speciefied transfer has not been initiated.*/
-   template<class C>
+   template<class C> inline
    bool Stencil<C>::wait(TransferID transferID) {
       typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
       if (info == typeInfo.end()) return false;
@@ -1198,7 +1200,7 @@ namespace pargrid {
     * formed from parameter types and their string values. These lists themselves 
     * are packed into a list, whose first item (list) is used for hierarchical level
     * 0, second item for hierarchical level 1, and so forth.*/   
-   template<class C>
+   template<class C> inline
    ParGrid<C>::ParGrid(): initialized(false) {
       recalculateInteriorCells = true;
       recalculateExteriorCells = true;
@@ -1211,20 +1213,21 @@ namespace pargrid {
          profMPI       = -1;
          profTotalLB   = -1;
          profUserData  = -1;
+         profDynamicData = -1;
       #endif
    }
    
    /** Destructor for ParGrid. Deallocates are user data in cells, i.e. destructor 
     * is called for ParCell::userData for each existing cell. Note that ParGrid 
     * destructor does not call MPI_Finalize.*/
-   template<class C>
+   template<class C> inline
    ParGrid<C>::~ParGrid() { }
    
    /** Add a new cell to ParGrid on this process. This function should only 
     * be called when adding initial cells to the grid, i.e. after calling 
     * ParGrid::initialize but before calling initialLoadBalance.
     * @return If true, the cell was inserted successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::addCell(CellID cellID,const std::vector<CellID>& nbrIDs,const std::vector<NeighbourID>& nbrTypes) {
       if (getInitialized() == false) return false;
       bool success = true;
@@ -1264,7 +1267,7 @@ namespace pargrid {
     * each process must give every other process information on the 
     * cells it has.
     * @return If true, information was shared successfully with other processes.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::addCellFinished() {
       if (getInitialized() == false) return false;
       
@@ -1329,7 +1332,7 @@ namespace pargrid {
     * @param stencilType Type of Stencil, one of the values defined in enum StencilType.
     * @param recvNbrTypeIDs Neighbour type IDs that identify the neighbours whom to receive data from.
     * @return If greater than zero the Stencil was created successfully.*/
-   template<class C>
+   template<class C> inline
    StencilID ParGrid<C>::addStencil(pargrid::StencilType stencilType,const std::vector<NeighbourID>& recvNbrTypeIDs) {
       int currentSize = stencils.size();
       if (stencils[currentSize].initialize(*this,stencilType,recvNbrTypeIDs) == false) {
@@ -1339,7 +1342,7 @@ namespace pargrid {
       return currentSize;
    }
    
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::addTransfer(StencilID stencilID,TransferID transferID,bool recalculate) {
       if (getInitialized() == false) return false;
       typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
@@ -1356,7 +1359,7 @@ namespace pargrid {
     * order to get an array of size five per cell, pass value five here.
     * @return ID number of the new data array or invalidDataID() if array was not created.
     * @see addUserDataTransfer.*/
-   template<class C> template<typename T>
+   template<class C> template<typename T> inline
    DataID ParGrid<C>::addUserData(const std::string& name,unsigned int N_elements) {
       // Check that a user data array with the given name doesn't already exist:
       for (size_t i=0; i<userData.size(); ++i) {
@@ -1387,7 +1390,7 @@ namespace pargrid {
     * @param recalculate If true the data array is dynamically reallocated and the MPI datatypes must be 
     * recalculated before starting transfers.
     * @return If true, a new transfer was added successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::addUserDataTransfer(DataID userDataID,StencilID stencilID,TransferID transferID,bool recalculate) {
       if (getInitialized() == false) return false;
       if (userDataID >= userData.size()) return false;
@@ -1400,7 +1403,7 @@ namespace pargrid {
    /** Balance load based on criteria given in ParGrid::initialize. Load balancing 
     * invalidates lists of cells etc. stored outside of ParGrid.
     * @return If true, mesh was repartitioned successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::balanceLoad() {
       #ifdef PROFILE
          profile::start("ParGrid load balance",profTotalLB);
@@ -1476,6 +1479,9 @@ namespace pargrid {
       // ********************************************************** //
       // ***** EXCHANGE IMPORTED AND EXPORTED CELLS' METADATA ***** //
       // ********************************************************** //
+      #ifdef PROFILE
+         profile::start("dynamic user data",profDynamicData);
+      #endif
       
       // Count the number of cells exported per neighbouring process, and number of cells 
       // imported per neighbouring process. All data needs to be sent (and received) with a 
@@ -1596,6 +1602,9 @@ namespace pargrid {
 	 delete [] blockLengths[i]; blockLengths[i] = NULL;
 	 delete [] displacements[i]; displacements[i] = NULL;
       }
+      #ifdef PROFILE
+         profile::stop();
+      #endif
 
       // Set new host for all exported cells, it should not matter 
       // if cells are exported from process A to process A here:
@@ -1616,7 +1625,9 @@ namespace pargrid {
       // ****************************************************** //
       // ***** EXCHANGE IMPORTED AND EXPORTED CELLS' DATA ***** //
       // ****************************************************** //
-
+      #ifdef PROFILE
+         profile::start("dynamic user data",profDynamicData);
+      #endif
       const unsigned int N_dataElements = dummy.getDataElements(0) + 2;
 
       // Swap all cells' neighbour IDs to global IDs:
@@ -1643,7 +1654,7 @@ namespace pargrid {
 	 indices[counter]          = 0;
 	 ++counter;
       }
-      
+
       // Fetch data to arrays describing imported data:
       counter = 0;
       for (int i=0; i<N_import; ++i) {
@@ -1752,6 +1763,9 @@ namespace pargrid {
 	 delete [] blockLengths[i]; blockLengths[i] = NULL;
 	 delete [] displacements[i]; displacements[i] = NULL;
       }
+      #ifdef PROFILE
+         profile::stop();
+      #endif
       
       // Copy non-exported local cells to newCells:
       counter = 0;
@@ -1836,7 +1850,7 @@ namespace pargrid {
       
       // Repartition user-defined data arrays:
       #ifdef PROFILE
-         profile::start("user data",profUserData);
+         profile::start("static user data",profUserData);
       #endif
       repartitionUserData(newCells.size(),newLocalsBegin,N_import,importProcesses,importsPerProcess,N_export,exportProcesses,exportLocalIDs,exportGlobalIDs);
       #ifdef PROFILE
@@ -2108,7 +2122,7 @@ namespace pargrid {
    }
    
    /** Synchronize MPI processes in the communicator ParGrid is using.*/
-   template<class C>
+   template<class C> inline
    void ParGrid<C>::barrier() const {
       MPI_Barrier(comm);
    }
@@ -2118,7 +2132,7 @@ namespace pargrid {
     * @param i_off Variable in which calculated i-offset is written.
     * @param j_off Variable in which calculated j-offset is written.
     * @param k_off Variable in which calculated k-offset is written.*/
-   template<class C>
+   template<class C> inline
    void ParGrid<C>::calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const {
       int tmp = nbrTypeID;
       k_off = tmp / 9;
@@ -2137,14 +2151,14 @@ namespace pargrid {
     * @param j_off Cell offset in second coordinate direction.
     * @param k_off Cell offset in third coordinate direction.
     * @return Calculated neighbour type ID.*/
-   template<class C>
+   template<class C> inline
    NeighbourID ParGrid<C>::calcNeighbourTypeID(int i_off,int j_off,int k_off) const {
       return (k_off+1)*9 + (j_off+1)*3 + i_off+1;
    }
 
    /** Debugging function, checks ParGrid internal structures for correctness.
     * @return If true, everything is ok.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::checkInternalStructures() const {
       if (getInitialized() == false) return false;
       bool success = true;
@@ -2279,7 +2293,7 @@ namespace pargrid {
     * value and if they differ, grid has been repartitioned.
     * @param counter User-defined partitioning counter. Initialize this to negative value.
     * @return If true, partitioning has changed since last time this function was called.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::checkPartitioningStatus(int& counter) const {
       #ifndef NDEBUG
          if (counter > partitioningCounter) {
@@ -2292,10 +2306,16 @@ namespace pargrid {
       return rvalue;
    }
    
+   /** Set contents of cell weight array to default value.*/
+   template<class C> inline
+   void ParGrid<C>::clearCellWeights() {
+      for (size_t i=0; i<cellWeights.size(); ++i) cellWeights[i] = DEFAULT_CELL_WEIGHT;
+   }
+   
    /** Finalize ParGrid. After this function returns ParGrid cannot be used 
     * without re-initialisation.
     * @return If true, ParGrid finalized successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::finalize() {
       if (initialized == false) return false;
       initialized = false;
@@ -2317,7 +2337,7 @@ namespace pargrid {
     * neighbour data has been synchronized.
     * @param stencilID ID number of the Stencil.
     * @return Vector containing local IDs of exterior cells.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getBoundaryCells(StencilID stencilID) const {
       typename std::map<StencilID,Stencil<C> >::const_iterator it = stencils.find(stencilID);
       #ifndef NDEBUG
@@ -2335,7 +2355,7 @@ namespace pargrid {
     * @param localID Local ID of cell whose neighbours are requested.
     * @param Reference to vector containing neihbours' global IDs. Size 
     * of vector is given by pargrid::N_neighbours. Vector can be indexed with ParGrid::calcNeighbourTypeID.*/
-   template<class C>
+   template<class C> inline
    CellID* ParGrid<C>::getCellNeighbourIDs(CellID localID) {
       #ifndef NDEBUG
          if (localID >= N_localCells) {
@@ -2348,18 +2368,18 @@ namespace pargrid {
    
    /** Get array containing cell weights that are used in load balancing.
     * @return Vector containing cell weights, indexed with local IDs.*/
-   template<class C>
+   template<class C> inline
    std::vector<CellWeight>& ParGrid<C>::getCellWeights() {return cellWeights;}
 
    /** Get MPI communicator that ParGrid uses.
     * @return Communicator used by ParGrid.*/
-   template<class C>
+   template<class C> inline
    MPI_Comm ParGrid<C>::getComm() const {return comm;}
 
    /** Get list of exterior cells. Exterior cells are cells that have at least one missing 
     * neighbour, i.e. these cells are situated at the boundary of the simulation domain.
     * @return Vector containing local IDs of exterior cells.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getExteriorCells() {
       if (recalculateExteriorCells == true) {
 	 exteriorCells.clear();
@@ -2374,25 +2394,25 @@ namespace pargrid {
    /** Get global IDs of cells stored on this process. The returned vector 
     * contains both local and remote cell global IDs.
     * @return Global IDs of all cells on this process.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getGlobalIDs() const {return globalIDs;}
    
    /** Get host process IDs of all cells (local + remote) stored on this process.
     * @return Hosts for all cells that this process has a copy of.*/
-   template<class C>
+   template<class C> inline 
    const std::vector<MPI_processID>& ParGrid<C>::getHosts() const {return hosts;}
    
    /** Query if ParGrid has initialized correctly.
     * The value returned by this function is set in ParGrid::initialize.
     * @return If true, ParGrid is ready for use.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::getInitialized() const {return initialized;}
 
    /** Get list of inner cells in the given Stencil. Inner cells are cells with zero 
     * remote neighbours. This function kills program if an invalid stencilID is used.
     * @param stencilID ID number of the Stencil.
     * @return Vector containing local IDs of inner cells.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getInnerCells(StencilID stencilID) const {
       typename std::map<StencilID,Stencil<C> >::const_iterator it = stencils.find(stencilID);
       if (it == stencils.end()) {
@@ -2405,7 +2425,7 @@ namespace pargrid {
    /** Get list of interior cells. Interior cells are cells whose all neighbours exist, i.e. 
     * they are not situated at the boundaries of the simulation domain.
     * @return Vector containing local IDs of interior cells.*/
-   template<class C>
+   template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getInteriorCells() {
       if (recalculateInteriorCells == true) {
 	 const unsigned int ALL_EXIST = 134217728 - 1; // This value is 2^27 - 1, i.e. integer with first 27 bits flipped
@@ -2422,7 +2442,7 @@ namespace pargrid {
     * process, either as a local cell or as copy of a remote cell, the returned local ID is valid.
     * @param globalID Global ID of the cell.
     * @return Local ID of the cell if the cell was found, or numeric_limits<pargrid::CellID>::max() otherwise.*/
-   template<class C>
+   template<class C> inline
    CellID ParGrid<C>::getLocalID(CellID globalID) const {
       std::map<CellID,CellID>::const_iterator it = global2LocalMap.find(globalID);
       #ifndef NDEBUG
@@ -2438,14 +2458,14 @@ namespace pargrid {
    /** Get vector containing neighbour existence flags of local cells. The array 
     * is indexed with local IDs. The size of array is given by getNumberOfLocalCells().
     * @return Vector containing neighbour existence flags.*/
-   template<class C>
+   template<class C> inline
    const std::vector<uint32_t>& ParGrid<C>::getNeighbourFlags() const {return neighbourFlags;}
    
    /** Get neighbour existence flags of given cell. This function may crash the simulation 
     * or return completely wrong information if an invalid local ID is used.
     * @param localID Local ID of the cell.
     * @return Neighbour flags of the given cell.*/
-   template<class C>
+   template<class C> inline
    uint32_t ParGrid<C>::getNeighbourFlags(CellID localID) const {
       #ifndef NDEBUG
          if (localID >= N_localCells) {
@@ -2458,29 +2478,29 @@ namespace pargrid {
    /** Get a list of neighbour processes. A process is considered to be a neighbour 
     * if it has one or more this process' local cells' neighbours.
     * @return List of neighbour process IDs.*/
-   template<class C>
+   template<class C> inline
    const std::set<MPI_processID>& ParGrid<C>::getNeighbourProcesses() const {return nbrProcesses;}
    
    /** Get the total number of cells on this process. This includes remote cells buffered on this process.
     * @return Total number of cells hosted and buffered on this process.*/
-   template<class C>
+   template<class C> inline
    CellID ParGrid<C>::getNumberOfAllCells() const {return cells.size();}
    
    /** Get the number of cells on this process.
     * @return Number of local cells.*/
-   template<class C>
+   template<class C> inline
    CellID ParGrid<C>::getNumberOfLocalCells() const {return N_localCells;}
    
    /** Get the number of MPI processes in the communicator used by ParGrid.
     * The value returned by this function is set in ParGrid::initialize.
     * @return Number of MPI processes in communicator comm.*/
-   template<class C>
+   template<class C> inline
    MPI_processID ParGrid<C>::getProcesses() const {return N_processes;}
    
    /** Get the rank of this process in the MPI communicator used by ParGrid.
     * The value returned by this function is set in ParGrid::initialize.
     * @return MPI rank of this process in communicator comm.*/
-   template<class C>
+   template<class C> inline
    MPI_processID ParGrid<C>::getRank() const {return myrank;}
 
    /** Get the remote neighbours of a given local cell.
@@ -2488,7 +2508,7 @@ namespace pargrid {
     * @param nbrTypeIDs Searched neighours.
     * @param nbrIDs Global IDs of searched remote neighbours are written here.
     * @param hosts MPI host processes of searched remote neighbours are written here.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::getRemoteNeighbours(CellID localID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs) {
       nbrIDs.clear();
       hosts.clear();
@@ -2504,8 +2524,14 @@ namespace pargrid {
       }	 
       return true;
    }
-   
-   template<class C>
+
+   /** Get array containing remote updates received from neighbouring processes.
+    * @param stencilID ID of the Stencil that was used to transfer updates.
+    * @param userDataID ID of the user data array.
+    * @param offsets Address of array containing offsets to array buffer is copied here.
+    * @param buffer Address of array containing remote updates is copied here.
+    * @return If true, offsets and buffer arrays contain valid pointers.*/
+   template<class C> inline
    bool ParGrid<C>::getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,char*& buffer) const {
       offsets = NULL;
       buffer = NULL;
@@ -2523,7 +2549,7 @@ namespace pargrid {
     * @param userDataID ID number of the array, as returned by addUserData.
     * @return Pointer to array or NULL if an array with given ID does not exist.
     * @see addUserData.*/
-   template<class C>
+   template<class C> inline
    char* ParGrid<C>::getUserData(DataID userDataID) {
       if (userDataID >= userData.size()) return NULL;
       if (userData[userDataID] == NULL) return NULL;
@@ -2534,7 +2560,7 @@ namespace pargrid {
     * @param name Unique name of the array. This name was given in addUserData.
     * @return Pointer to array or NULL if an array with given name does not exist.
     * @see addUserData.*/
-   template<class C>
+   template<class C> inline
    char* ParGrid<C>::getUserData(const std::string& name) {
       for (size_t i=0; i<userData.size(); ++i) {
 	 if (userData[i] == NULL) continue;
@@ -2545,7 +2571,7 @@ namespace pargrid {
    
    /** Get all valid user data ID numbers.
     * @param userDataIDs Vector in which valid user data IDs are written to.*/
-   template<class C>
+   template<class C> inline
    void ParGrid<C>::getUserDataIDs(std::vector<DataID>& userDataIDs) const {
       userDataIDs.clear();
       for (size_t i=0; i<userData.size(); ++i) {
@@ -2558,8 +2584,8 @@ namespace pargrid {
     * The value is equal to number of elements per cell times byte size of basic datatype.
     * @param userDataID ID number of the user data array.
     * @return Zero if an array with given ID number does not exist, otherwise byte size of array element.*/
-   template<class C>
-   unsigned int ParGrid<C>::getUserDataElementSize(DataID userDataID) const {
+   template<class C> inline
+   unsigned int ParGrid<C>::getUserDataElementSize(DataID userDataID) const { 
       if (userDataID >= userData.size()) return 0;
       if (userData[userDataID] == NULL) return 0;
       return userData[userDataID]->getElementSize();
@@ -2572,7 +2598,7 @@ namespace pargrid {
     * @param N_elements Variable in which number of basic datatypes per parallel cell is written.
     * @param ptr Variable in which pointer to user array is written.
     * @return If true, user array with given ID exists and output variables contain valid values.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const {
       if (userDataID >= userData.size()) return false;
       if (userData[userDataID] == NULL) return false;
@@ -2590,7 +2616,7 @@ namespace pargrid {
     * @param datatype MPI_Type_commit is called for this variable.
     * @param reverseStencil FIX ME
     * @return If true, user array with given ID number exists and an MPI datatype was created successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::getUserDatatype(DataID userDataID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil) {
       if (userDataID >= userData.size()) return false;
       if (userData[userDataID] == NULL) return false;
@@ -2609,7 +2635,7 @@ namespace pargrid {
     * hierarchical partitioning if vector size is greater than one, otherwise the 
     * load balancing method given in the first element is used.
     * @return If true, ParGrid initialized correctly.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters) {
       zoltan = NULL;
       MPI_Comm_dup(comm,&(this->comm));
@@ -2748,37 +2774,37 @@ namespace pargrid {
    /** Initialize a partitioning counter that can be used to check if mesh 
     * has been repartitioned. This function should only be called during initialization.
     * @return Initial value for partitioning counter.*/
-   template<class C>
+   template<class C> inline
    int ParGrid<C>::initPartitioningCounter() const {return -1;}
    
    /** Return invalid cell ID. Cell IDs obtained elsewhere may be 
     * tested against this value to see if they are valid. DEPRECATED.
     * @return Invalid cell global ID.*/
-   template<class C>
+   template<class C> inline
    CellID ParGrid<C>::invalid() const {return std::numeric_limits<CellID>::max();}
    
    /** Return an invalid cell ID.
     * @return Invalid cell (local or global) ID.*/
-   template<class C>
+   template<class C> inline
    CellID ParGrid<C>::invalidCellID() const {return std::numeric_limits<CellID>::max();}
    
    /** Return an invalid user data ID.
     * @return Invalid user data ID.*/
-   template<class C>
+   template<class C> inline
    DataID ParGrid<C>::invalidDataID() const {return std::numeric_limits<DataID>::max();}
    
    /** Return an invalid stencil ID.
     * @return Invalid stencil ID.*/
-   template<class C>
+   template<class C> inline
    StencilID ParGrid<C>::invalidStencilID() const {return std::numeric_limits<StencilID>::max();}
    
    /** Return an invalid transfer ID.
     * @return Invalid transfer ID.*/
-   template<class C>
+   template<class C> inline
    TransferID ParGrid<C>::invalidTransferID() const {return -1;}
 
    /** Invalidate ParGrid internal variables. This function gets called after mesh has been repartitioned.*/
-   template<class C>
+   template<class C> inline
    void ParGrid<C>::invalidate() {
       recalculateInteriorCells = true;
       recalculateExteriorCells = true;
@@ -2800,9 +2826,8 @@ namespace pargrid {
    /** Check if a cell with given global ID exists on this process.
     * @param localID Local ID of the searched cell.
     * @return If true, the cell exists on this process.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::localCellExists(CellID localID) {
-      // Acquire read access to localCells and search for the given cellID:
       if (localID >= N_localCells) return false;
       return true;
    }
@@ -2810,12 +2835,12 @@ namespace pargrid {
    /** Get a pointer to user-data of the given cell.
     * @param localID Local ID of the cell that holds the requested user data.
     * @return Pointer to user data, or NULL if a cell with the given global ID does not exist.*/
-   template<class C>
+   template<class C> inline
    C* ParGrid<C>::operator[](const CellID& localID) {
-      // Acquire read access to localCells and search for the given cellID:
       #ifndef NDEBUG
          if (localID >= cells.size()) {
 	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " LID#" << localID << " too large in operator[] !" << std::endl;
+	    return NULL;
 	 }
       #endif
       return &(cells[localID].userData);
@@ -2825,7 +2850,7 @@ namespace pargrid {
     * @param stencilID ID of the Stencil.
     * @param transferID ID of the transfer.
     * @return If true, the transfer was removed successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::removeDataTransfer(StencilID stencilID,TransferID transferID) {
       if (getInitialized() == false) return false;
       typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
@@ -2837,7 +2862,7 @@ namespace pargrid {
     * @param userDataID ID number of the user data array, as returned by addUserData.
     * @return If true, the user data array was removed successfully.
     * @see addUserData.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::removeUserData(DataID userDataID) {
       if (userDataID >= userData.size()) return false;
       if (userDataHoles.find(userDataID) != userDataHoles.end()) return false;
@@ -2865,7 +2890,7 @@ namespace pargrid {
     * @param exportLocalIDs Local ID of exported cell i.
     * @param exportGlobalIDs Global ID of exported cell i.
     * @return If true, user data was repartitioned successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::repartitionUserData(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
 					const std::map<MPI_processID,unsigned int>& importsPerProcess,
 					int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,ZOLTAN_ID_PTR exportGlobalIDs) {
@@ -3018,7 +3043,7 @@ namespace pargrid {
     * @param pm New partitioning mode. These values are passed to Zoltan. Note 
     * that one needs to call ParGrid::balanceLoad before the new mode has any effect.
     * @return If true, new mode was successfully taken into use.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::setPartitioningMode(PartitioningMode pm) {
       bool rvalue = true;
       switch (pm) {
@@ -3042,7 +3067,7 @@ namespace pargrid {
     * @param stencilID ID of the stencil.
     * @param transferID ID of the data transfer.
     * @return If true, synchronization started successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::startNeighbourExchange(StencilID stencilID,TransferID transferID) {
       if (getInitialized() == false) return false;
       if (transferID == 0) return false;
@@ -3054,7 +3079,7 @@ namespace pargrid {
     * Based on this information processes know who hosts the remote neighbours of 
     * their local cells. This function should only be called once at the start of simulation.
     * @return If true, process information was exchanged successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::syncCellHosts() {
       if (getInitialized() == false) return false;
       
@@ -3111,7 +3136,7 @@ namespace pargrid {
     * @param stencilID ID of the stencil.
     * @param transferID ID of the transfer.
     * @return If true, data synchronization completed successfully.*/
-   template<class C>
+   template<class C> inline
    bool ParGrid<C>::wait(StencilID stencilID,TransferID transferID) {
       if (getInitialized() == false) return false;
       typename std::map<StencilID,Stencil<C> >::iterator sten = stencils.find(stencilID);
