@@ -82,6 +82,7 @@ namespace pargrid {
    const uint32_t ALL_NEIGHBOURS_EXIST = 134217728 - 1; /**< If a cell's neighbour flags field equals this value all its 
 							 * neighbours exist, i.e. the cell is an inner cell.*/
    const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-10;  /**< Default cell weight (measures computational load).*/
+   const StencilID DEFAULT_STENCIL = 0;             /**< ID of the default transfer Stencil. This Stencil always exists.*/
    
    // Forward declaration of ParGrid, required for declarations of 
    // auxiliary structs below.
@@ -336,6 +337,7 @@ namespace pargrid {
       bool localCellExists(CellID cellID);
       C* operator[](const CellID& cellID);
       bool removeDataTransfer(StencilID stencilID,TransferID transferID);
+      bool removeStencil(StencilID stencilID);
       bool removeUserData(DataID userDataID);
       bool setPartitioningMode(PartitioningMode pm);
       bool startNeighbourExchange(StencilID stencilID,TransferID transferID);
@@ -1051,7 +1053,7 @@ namespace pargrid {
       if (update() == false) initialized = false;
       return initialized;
    }
-
+   
    /** Remove transfer with given identifier from Stencil.
     * @param ID Identifier of the removed transfer.
     * @return If true, transfer was removed successfully.*/
@@ -1321,7 +1323,7 @@ namespace pargrid {
 	 if (i == 13) continue;
 	 nbrTypeIDs[i] = i;
       }
-      stencils[0].initialize(*this,localToRemoteUpdates,nbrTypeIDs);
+      stencils[pargrid::DEFAULT_STENCIL].initialize(*this,localToRemoteUpdates,nbrTypeIDs);
 
       // Invalidate all internal variables that depend on cell partitioning:
       invalidate();
@@ -2856,6 +2858,18 @@ namespace pargrid {
       typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
       if (it == stencils.end()) return false;
       return it->second.removeTransfer(transferID);
+   }
+   
+   /** Remove a transfer stencil from ParGrid.
+    * @param stencilID ID of the Stencil.
+    * @return If true, the Stencil was removed successfully.*/
+   template<class C> inline
+   bool ParGrid<C>::removeStencil(StencilID stencilID) {
+      if (stencilID == pargrid::DEFAULT_STENCIL) return false;
+      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
+      if (it == stencils.end()) return false;
+      stencils.erase(it);
+      return true;
    }
    
    /** Remove a user data array that has been previously allocated with addUserData.
