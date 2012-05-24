@@ -426,6 +426,7 @@ namespace pargrid {
          int profTotalLB;
          int profUserData;
          int profDynamicData;
+         int profStencilRecalc;
       #endif
       
       bool checkInternalStructures() const;
@@ -1216,6 +1217,7 @@ namespace pargrid {
          profTotalLB   = -1;
          profUserData  = -1;
          profDynamicData = -1;
+         profStencilRecalc = -1;
       #endif
    }
    
@@ -2104,11 +2106,17 @@ namespace pargrid {
       neighbourFlags.swap(newNeighbourFlags);
       
       // Recalculate and/or invalidate all other internal data that depends on partitioning:
+      #ifdef PROFILE
+         profile::start("Stencil Recalculation",profStencilRecalc);
+      #endif
       nbrProcesses.clear();
       for (CellID c=N_localCells; c<hosts.size(); ++c) {
 	 nbrProcesses.insert(hosts[c]);
       }
       invalidate();
+      #ifdef PROFILE
+         profile::stop();
+      #endif
       
       #ifndef NDEBUG
          checkInternalStructures();
