@@ -328,7 +328,6 @@ namespace pargrid {
       bool getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const;
       bool getUserDatatype(TransferID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
       bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
-      int initPartitioningCounter() const;
       CellID invalid() const;
       CellID invalidCellID() const;
       DataID invalidDataID() const;
@@ -2220,7 +2219,7 @@ namespace pargrid {
       std::set<CellID> tmpGlobalIDs;
       for (size_t i=0; i<cells.size(); ++i) {
 	 std::set<CellID>::const_iterator it = tmpGlobalIDs.find(globalIDs[i]);
-	 if (tmpGlobalIDs.find(globalIDs[i]) != tmpGlobalIDs.end()) {
+	 if (it != tmpGlobalIDs.end()) {
 	    std::cerr << "P#" << myrank << " LID#" << i << " GID#" << globalIDs[i] << " duplicate entry" << std::endl;
 	    success = false;
 	 }
@@ -2780,12 +2779,6 @@ namespace pargrid {
       initialized = true;
       return initialized;
    }
-   
-   /** Initialize a partitioning counter that can be used to check if mesh 
-    * has been repartitioned. This function should only be called during initialization.
-    * @return Initial value for partitioning counter.*/
-   template<class C> inline
-   int ParGrid<C>::initPartitioningCounter() const {return -1;}
    
    /** Return invalid cell ID. Cell IDs obtained elsewhere may be 
     * tested against this value to see if they are valid. DEPRECATED.
