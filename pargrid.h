@@ -39,250 +39,22 @@
 #include <mpi.h>
 #include <zoltan_cpp.h>
 
-#include "mpiconversion.h"
-
 #ifdef PROFILE
    #include "profiler.h"
 #endif
 
+// Includes for ParGrid package headers:
+#include "mpiconversion.h"
+#include "pargrid_definitions.h"
+#include "pargrid_zoltan_callbacks.h"
+#include "pargrid_userdata_static.h"
+#include "pargrid_userdata_dynamic.h"
+//#include "pargrid_userdata_dynamic_old.h"
+#include "pargrid_stencil.h"
+#include "pargrid_datawrapper.h"
+
 namespace pargrid {
-   typedef float CellWeight;                        /**< Datatype Zoltan uses for cell and edge weights.*/
-   typedef double CellCoordinate;                   /**< Datatype Zoltan uses for cell coordinates.*/
-   typedef unsigned int CellID;                     /**< Datatype used for global cell IDs.*/
-   typedef int MPI_processID;                       /**< Datatype MPI uses for process IDs.*/
-   typedef unsigned char NeighbourID;               /**< Datatype ParGrid uses for neighbour type IDs.*/
-   typedef unsigned int StencilID;                  /**< Datatype ParGrid uses for stencil IDs.*/
-   typedef unsigned int TransferID;                 /**< Datatype ParGrid uses for (data) transfer IDs.*/
-   typedef unsigned int DataID;                     /**< Datatype ParGrid uses for user-defined array IDs.*/
 
-   enum InputParameter {
-      cellWeightScale,                              /**< Value used for cell weights.*/
-      edgeWeightScale,                              /**< Value (or its scale) used to calculate edge weights.*/
-      imbalanceTolerance,                           /**< Load imbalance tolerance value.*/
-      loadBalancingMethod,                          /**< Load balancing method to use.*/
-      processesPerPartition                         /**< Processes per partition (hierarchical partitioning only).*/
-   };
-
-   enum StencilType {
-      localToRemoteUpdates,
-      remoteToLocalUpdates
-   };
-   
-   /** Different partitioning modes that ParGrid supports.
-    * These are directly tied to the partitioning modes supported by Zoltan.*/
-   enum PartitioningMode {
-      partition,                                    /**< New partitioning should always be computed from scratch.*/
-      repartition,                                  /**< While repartitioning cells the existing partitioning
-						     * should be taken into account to minimize data transfers.*/
-      refine                                        /**< Partitioning calls should only slightly improve 
-						     * the existing partitioning.*/
-   };
-   
-   const size_t N_neighbours = 27;                  /**< Number of neighbours reserved each parallel cell has (including the cell itself).*/
-   const uint32_t ALL_NEIGHBOURS_EXIST = 134217728 - 1; /**< If a cell's neighbour flags field equals this value all its 
-							 * neighbours exist, i.e. the cell is an inner cell.*/
-   const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-10;  /**< Default cell weight (measures computational load).*/
-   const StencilID DEFAULT_STENCIL = 0;             /**< ID of the default transfer Stencil. This Stencil always exists.*/
-   
-   // Forward declaration of ParGrid, required for declarations of 
-   // auxiliary structs below.
-   template<class C> class ParGrid;
-   
-   // ***************************************************** //
-   // ***** DECLARATIONS OF ZOLTAN CALLBACK FUNCTIONS ***** //
-   // ***************************************************** //
-
-   template<class C>
-   void cb_getAllCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,int N_cellIDs,ZOLTAN_ID_PTR globalID,
-				 ZOLTAN_ID_PTR localID,int N_coords,double* geometryData,int* rcode);   
-   template<class C>
-   void cb_getCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,ZOLTAN_ID_PTR globalID,
-			   ZOLTAN_ID_PTR localID,double* geometryData,int* rcode);
-   template<class C>
-   void cb_getAllCellEdges(void* pargrid,int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
-			   ZOLTAN_ID_PTR localIDs,int* N_edges,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
-			   int N_weights,CellWeight* edgeWeights,int* rcode);
-   template<class C>
-   void cb_getCellEdges(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
-			ZOLTAN_ID_PTR localID,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
-			int N_weights,CellWeight* weight,int* rcode);
-   template<class C>
-   void cb_getHierarchicalParameters(void* pargrid,int level,Zoltan_Struct* zs,int* rcode);
-   template<class C>
-   int cb_getHierarchicalPartNumber(void* pargrid,int level,int* rcode);
-   template<class C>
-   void cb_getHyperedges(void* pargrid,int N_globalIDs,int N_vtxedges,int N_pins,int format,
-			 ZOLTAN_ID_PTR vtxedge_GID,int* vtxedge_ptr,ZOLTAN_ID_PTR pin_GID,int* rcode);
-   template<class C>
-   void cb_getHyperedgeWeights(void* pargrid,int N_globalIDs,int N_localIDs,int N_edges,int N_weights,
-			       ZOLTAN_ID_PTR edgeGlobalID,ZOLTAN_ID_PTR edgeLocalID,CellWeight* edgeWeights,int* rcode);
-   template<class C>
-   int cb_getMeshDimension(void* pargrid,int* rcode);
-   template<class C>
-   void cb_getLocalCellList(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalIDs,
-			    ZOLTAN_ID_PTR localIDs,int N_weights,CellWeight* cellWeights,int* rcode);
-   template<class C>
-   void cb_getNumberOfAllEdges(void* pargrid,int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
-			      ZOLTAN_ID_PTR localIDs,int* N_edges,int* rcode);
-   template<class C>
-   int cb_getNumberOfEdges(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
-			ZOLTAN_ID_PTR localID,int* rcode);
-   template<class C>
-   int cb_getNumberOfHierarchicalLevels(void* pargrid,int* rcode);
-   template<class C>
-   void cb_getNumberOfHyperedges(void* pargrid,int* N_lists,int* N_pins,int* format,int* rcode);
-   template<class C>
-   void cb_getNumberOfHyperedgeWeights(void* pargrid,int* N_edges,int* rcode);
-   template<class C>
-   int cb_getNumberOfLocalCells(void* pargrid,int* rcode);
-
-   // ******************************
-   // ***** CLASS DECLARATIONS *****
-   // ******************************
-
-   /** Wrapper for a user-defined parallel data array in ParGrid.
-    * The purpose of this struct is to include all information that is 
-    * needed to create, delete, and copy parallel arrays. Some helper 
-    * functions are also provided.*/
-   template<typename C> struct UserDataWrapper {
-    public:
-      UserDataWrapper();
-      UserDataWrapper(const UserDataWrapper& udw);
-      ~UserDataWrapper();
-      
-      void copy(const UserDataWrapper& udw,CellID newCell,CellID oldCell);
-      bool finalize();
-      void* getAddress();
-      void getDatatype(const std::set<CellID>& globalIDs,MPI_Datatype& datatype);
-      void getDatatype(const std::map<CellID,CellID>& cellIDs,int* disps,MPI_Datatype& datatype);
-      unsigned int getElementSize() const {return N_elements*byteSize;}
-      void initialize(ParGrid<C>* pargrid,const std::string& name,size_t N_cells,unsigned int elements,unsigned int byteSize);
-
-      char* array;                   /**< Pointer to array containing the data.*/
-      std::string name;              /**< Name of the array.*/
-      unsigned int byteSize;         /**< Byte size of a single array element, i.e. sizeof(double) for a double array.*/
-      unsigned int N_cells;          /**< Number of cells (=elements) in the array, equal to the number of 
-				      * cells (local+remote) on this process.*/
-      unsigned int N_elements;       /**< How many values are reserved per cell.*/
-      ParGrid<C>* pargrid;           /**< Pointer to ParGrid class that owns this UserDataWrapper.*/
-    private:
-      MPI_Datatype basicDatatype;    /**< MPI derived datatype that transfers data on a single cell.*/
-   };
-   
-   // ***** PARCELL *****
-   
-   template<class C> struct ParCell {
-    public:
-      ParCell();
-      ~ParCell();
-
-      C userData;                                  /**< User data.*/
-
-      void getData(bool sending,TransferID transferID,int receivesPosted,int receiveCount,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types);
-      unsigned int getDataElements(TransferID transferID) const;
-      void getMetadata(TransferID transferID,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types);
-      unsigned int getMetadataElements(TransferID transferID) const;
-      
-    private:
-
-   };
-
-   // ***** STENCIL *****
-   
-   /** Class used to calculate send and receive lists for user-defined stencils in ParGrid. 
-    * This class does most of the dirty work related to transferring data with MPI.*/
-   template<class C>
-   struct Stencil {
-    public:
-      Stencil();
-      ~Stencil();
-      
-      bool addTransfer(TransferID transferID,bool recalculate);
-      bool addUserDataTransfer(DataID userDataID,TransferID transferID,bool recalculate);
-      void clear();
-      const std::vector<CellID>& getBoundaryCells() const;
-      const std::vector<CellID>& getInnerCells() const;
-      bool getRemoteUpdates(DataID userDataID,unsigned int*& offsets,char*& buffer) const;
-      bool initialize(ParGrid<C>& pargrid,StencilType stencilType,const std::vector<NeighbourID>& receives);
-      bool removeUserDataTransfers(DataID userDataID);
-      bool removeTransfer(TransferID transferID);
-      bool startTransfer(TransferID transferID);
-      bool update();
-      bool wait(TransferID transferID);
-
-    private:
-      bool calcLocalUpdateSendsAndReceives();
-      bool calcTypeCache(TransferID transferID);
-
-      /** Wrapper for MPI_Datatype. This was created to make copying and deletion of
-       * MPI_Datatype work correctly. Calls MPI_Type_dup in appropriate places.*/
-      struct TypeWrapper {
-	 MPI_Datatype type;                               /**< MPI datatype.*/
-	 
-	 TypeWrapper();
-	 TypeWrapper(const TypeWrapper& tw);
-	 ~TypeWrapper();
-	 TypeWrapper& operator=(const TypeWrapper& tw);
-      };
-      
-      /** MPI Datatype cache for data transfer.*/
-      struct TypeCache {
-	 std::vector<TypeWrapper> recvs; /**< MPI datatypes for receiving data.*/
-	 std::vector<TypeWrapper> sends; /**< MPI datatypes for sending data.*/
-      };
-
-      /** Information on data transfer.*/
-      struct TypeInfo {
-	 int N_receives;          /**< Total number of messages received during this transfer.*/
-	 int N_sends;             /**< Total number of messages sent during this transfer.*/
-	 bool typeVolatile;       /**< If true, MPI Datatypes need to be recalculated every time 
-				   * this transfer is started.*/
-	 DataID userDataID;       /**< ID of user-defined array. Valid if this transfer is associated with a user-defined array.*/
-	 bool started;            /**< If true, this transfer has started and MPI requests are valid.*/
-	 MPI_Request* requests;   /**< MPI requests associated with this transfer.*/
-      };
-      
-      /** Receive buffer for StencilType::remoteToLocalUpdates. These arrays 
-       * are only allocated if needed. RecvBuffer is only used for 
-       * user-defined ParGrid data arrays.*/
-      struct RecvBuffer {
-	 RecvBuffer();
-	 RecvBuffer(const RecvBuffer& rbuffer);
-	 ~RecvBuffer();
-	 
-	 int offsetsSize;
-	 int bufferSize;
-	 int elementSize;
-	 unsigned int* offsets;
-	 char* buffer;
-      };
-
-      std::vector<CellID> boundaryCells;                           /**< List of boundary cells of this stencil.*/
-      std::vector<CellID> innerCells;                              /**< List of inner cells of this stencil.*/
-      bool initialized;                                            /**< If true, Stencil has initialized successfully and is ready for use.*/
-      std::vector<NeighbourID> receivedNbrTypeIDs;                 /**< Neighbour type IDs indicating which cells to receive data from.*/
-      std::vector<NeighbourID> sentNbrTypeIDs;                     /**< Neighbour type IDs indicating which cells to send data.*/
-      std::map<TransferID,std::map<MPI_processID,TypeCache> > typeCaches; /**< MPI datatype caches for each transfer identifier,
-									   * one cache per neighbouring process.*/
-      std::map<TransferID,TypeInfo> typeInfo;                      /**< Additional data transfer information for each transfer ID.*/
-      ParGrid<C>* parGrid;                                         /**< Pointer to parallel grid.*/
-      StencilType stencilType;
-      std::map<MPI_processID,std::set<CellID> > recvs;             /**< List of received cells (ordered by global ID) from each neighbour process.*/
-      std::map<MPI_processID,std::set<CellID> > sends;             /**< List of cells sent (ordered by global ID) to each neighbour process.*/
-      std::map<CellID,std::set<MPI_processID> > recvCounts;        /**< For each local cell, identified by global ID, ranks of remote 
-								    * processes whom to receive an update from. This map is only 
-								    * used for stencilType remoteToLocalUpdates.*/
-      std::map<DataID,RecvBuffer*> recvBuffers;                    /**< Receive buffers for StencilType::remoteToLocalUpdates. These 
-								    * are allocated only when needed.*/
-   };
-
-   // ***** PARGRID *****
-
-   /**
-    * User-defined template class must contain following member functions:
-    * void getCoordinates(CellCoordinate*) const;
-    * CellWeight getWeight() const;
-    */
    template<class C> class ParGrid {
     public:
       ParGrid();
@@ -290,10 +62,9 @@ namespace pargrid {
 
       bool addCell(CellID cellID,const std::vector<CellID>& nbrIDs,const std::vector<NeighbourID>& nbrTypes);
       bool addCellFinished();
+      bool addDataTransfer(DataID userDataID,StencilID stencilID);
       StencilID addStencil(pargrid::StencilType stencilType,const std::vector<NeighbourID>& recvNbrTypeIDs);
-      bool addTransfer(StencilID stencilID,TransferID transferID,bool recalculate);
-      template<typename T> DataID addUserData(const std::string& name,unsigned int N_elements);
-      bool addUserDataTransfer(DataID userDataID,StencilID stencilID,TransferID transferID,bool recalculate);
+      template<typename T> DataID addUserData(const std::string& name,unsigned int N_elements,bool isDynamic=false);
       bool balanceLoad();
       void barrier() const;
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
@@ -323,26 +94,26 @@ namespace pargrid {
       bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,char*& buffer) const;
       char* getUserData(DataID userDataID);
       char* getUserData(const std::string& name);
+      template<typename T> DataWrapper<T> getUserDataDynamic(DataID userDataID);
+      template<typename T> DataWrapper<T> getUserDataDynamic(const std::string& name);
       unsigned int getUserDataElementSize(DataID userDataID) const;
       void getUserDataIDs(std::vector<DataID>& userDataIDs) const;
       bool getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const;
-      bool getUserDatatype(TransferID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
+      bool getUserDatatype(DataID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
       bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
       CellID invalid() const;
       CellID invalidCellID() const;
       DataID invalidDataID() const;
       StencilID invalidStencilID() const;
-      TransferID invalidTransferID() const;
       bool localCellExists(CellID cellID);
-      C* operator[](const CellID& cellID);
-      bool removeDataTransfer(StencilID stencilID,TransferID transferID);
+      bool removeDataTransfer(DataID userDataID,StencilID stencilID);
       bool removeStencil(StencilID stencilID);
       bool removeUserData(DataID userDataID);
       bool setPartitioningMode(PartitioningMode pm);
-      bool startNeighbourExchange(StencilID stencilID,TransferID transferID);
-      bool wait(StencilID stencilID,TransferID transferID);
+      bool startNeighbourExchange(StencilID stencilID,DataID userDataID);
+      bool wait(StencilID stencilID,DataID userDataID);
 
-      // ***** ZOLTAN CALLBACK FUNCTION DECLARATIONS *****
+      // ***** ZOLTAN CALLBACK FUNCTION DECLARATIONS ***** //
 
       void getAllCellCoordinates(int N_globalEntries,int N_localEntries,int N_cellIDs,ZOLTAN_ID_PTR globalID,
 				 ZOLTAN_ID_PTR localID,int N_coords,double* geometryData,int* rcode);
@@ -387,18 +158,17 @@ namespace pargrid {
       CellWeight cellWeight;                                              /**< Cell weight scale, used to calculate cell weights for Zoltan.*/
       std::vector<CellWeight> cellWeights;                                /**< Computational load of each local cell.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
-
-      std::vector<ParCell<C> > cells;                                     /**< Local cells stored on this process, followed by remote cells.*/
       std::vector<CellID> globalIDs;                                      /**< Global IDs of cells stored in vector cells.*/
       CellID N_localCells;                                                /**< Number of local cells on this process.*/
+      CellID N_totalCells;                                                /**< Total number of cells (local+buffered) on this process.*/
       std::map<CellID,CellID> global2LocalMap;                            /**< Global-to-local ID mapping.*/
       std::vector<MPI_processID> hosts;                                   /**< Host process for each cell in vector cells.*/
       std::vector<CellID> cellNeighbours;                                 /**< Local IDs of neighbours of cells, only valid for local cells
 									   as remote cells (that are cached on this process) neighbours do 
 									   not have local copies.*/
       std::vector<uint32_t> neighbourFlags;                               /**< Neighbour existence flags for local cells.*/
-      std::vector<NeighbourID> cellNeighbourTypes;                        /**< Neighbour type IDs of cells' neighbours.*/
-      std::vector<UserDataWrapper<C>*> userData;                          /**< User-defined data arrays.*/
+      std::map<DataID,UserDataDynamic<ParGrid<C> >*> userDataDynamic;     /**< Arrays containing dynamically allocated user data.*/
+      std::map<DataID,UserDataStatic<ParGrid<C> >*> userDataStatic;       /**< Arrays containing static-size user data.*/
       std::set<unsigned int> userDataHoles;                               /**< List of holes in userData.*/
 
       MPI_Comm comm;                                                      /**< MPI communicator used by ParGrid.*/
@@ -415,9 +185,9 @@ namespace pargrid {
       int partitioningCounter;                                            /**< Counter that is increased every time the mesh is repartitioned.*/
       std::vector<MPI_Request> recvRequests;                              /**< List of MPI requests that are used for receiving data.*/
       std::vector<MPI_Request> sendRequests;                              /**< List of MPI requests that are used for sending data.*/
-      std::map<StencilID,Stencil<C> > stencils;                           /**< Transfer stencils, identified by their ID numbers.*/
+      std::map<StencilID,Stencil<ParGrid<C>,C > > stencils;                 /**< Transfer stencils, identified by their ID numbers.*/
       Zoltan* zoltan;                                                     /**< Pointer to Zoltan.*/
-
+      
       #ifdef PROFILE
          int profZoltanLB;
          int profParGridLB;
@@ -425,774 +195,28 @@ namespace pargrid {
          int profTotalLB;
          int profUserData;
          int profDynamicData;
+         int profDynamicDataMPI;
+         int profDynamicDataOld;
          int profStencilRecalc;
       #endif
       
       bool checkInternalStructures() const;
       void invalidate();
-      bool repartitionUserData(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,const std::map<MPI_processID,unsigned int>& importsPerProcess,
-			       int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,ZOLTAN_ID_PTR exportGlobalIDs);
+      void startMetadataRepartitioning(std::vector<MPI_Request>& nbrRecvRequests,
+				       std::map<MPI_processID,std::vector<int> >& importDisplacements,
+				       std::vector<MPI_Request>& nbrSendRequests,
+				       std::map<MPI_processID,std::vector<int> >& exportDisplacements,
+				       std::vector<CellID>& newCellNeighbours);
+      bool repartitionUserDataStatic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
+				     const std::map<MPI_processID,unsigned int>& importsPerProcess,int N_export,
+				     int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs);
+      bool repartitionUserDataDynamic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
+				      std::map<MPI_processID,std::vector<int> >& importDisplacements,int N_export,
+				      int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+				      std::map<MPI_processID,std::vector<int> >& exportDisplacements);
       bool syncCellHosts();
+      void waitMetadataRepartitioning(std::vector<MPI_Request>& recvRequests,std::vector<MPI_Request>& sendRequests);
    };
-
-   // *********************************************************** //
-   // ***** USER DATA WRAPPER TEMPLATE FUNCTION DEFINITIONS ***** //
-   // *********************************************************** //
-
-   /** Default constructor. Calls UserDataWrapper::finalize().*/
-   template<typename T> inline
-   UserDataWrapper<T>::UserDataWrapper() {array=NULL; basicDatatype=MPI_DATATYPE_NULL; finalize();}
-   
-   /** Copy-constructor. Calls UserDataWrapper::initialize and then copies the data.
-    * @param udw UserDataWrapper whose copy is to be made.*/
-   template<typename T> inline
-   UserDataWrapper<T>::UserDataWrapper(const UserDataWrapper& udw) {
-      initialize(const_cast<ParGrid<T>*>(udw.pargrid),udw.name,udw.N_cells,udw.N_elements,udw.byteSize);
-      for (size_t i=0; i<N_cells*N_elements*byteSize; ++i) array[i] = udw.array[i];
-   }
-   
-   /** Destructor. Calls UserDataWrapper::finalize().*/
-   template<typename T> inline
-   UserDataWrapper<T>::~UserDataWrapper() {finalize();}
-
-   /** Copy data from given UserDataWrapper.
-    * @param udw UserDataWrapper whose data is to be copied.
-    * @param newCell Target cell in which data is written.
-    * @param oldCell Source cell in udw in which data is read.*/
-   template<typename T> inline
-   void UserDataWrapper<T>::copy(const UserDataWrapper& udw,CellID newCell,CellID oldCell) {
-      for (unsigned int i=0; i<N_elements*byteSize; ++i) 
-	array[newCell*N_elements*byteSize+i] = udw.array[oldCell*N_elements*byteSize+i];
-   }
-   
-   /** Deallocates UserDataWrapper::array and sets internal variables to dummy values.
-    * @return If true, finalization completed successfully.*/
-   template<typename T> inline
-   bool UserDataWrapper<T>::finalize() {
-      //if (basicDatatype != MPI_DATATYPE_NULL) MPI_Type_free(&basicDatatype);
-      byteSize = 0;
-      name = "";
-      pargrid = NULL;
-      N_elements = 0;
-      N_cells = 0;
-      delete [] array; array = NULL;
-      return true;
-   }
-
-   /** Get a pointer to UserDataWrapper::array.
-    * @return Pointer to user data array. NULL value is returned for uninitialized array.*/
-   template<typename T> inline
-   void* UserDataWrapper<T>::getAddress() {return array;}
-
-   /** Get a derived MPI datatype that will transfer all the given cells with a single send (or receive).
-    * This function calls MPI_Type_commit for the newly created datatype, MPI_Type_free must be called elsewhere.
-    * @param globalIDs Global IDs of the cells.
-    * @param datatype Variable in which the derived datatype is to be written.*/
-   template<typename T> inline
-   void UserDataWrapper<T>::getDatatype(const std::set<CellID>& globalIDs,MPI_Datatype& datatype) {
-      // For each global ID, get the corresponding local ID (=index into array) and 
-      // store its offset relative to memory address MPI_BOTTOM:
-      int* displacements = new int[globalIDs.size()];
-      size_t counter = 0;
-      for (std::set<CellID>::const_iterator cellGID=globalIDs.begin(); cellGID!=globalIDs.end(); ++cellGID) {
-	 const CellID cellLID = pargrid->getLocalID(*cellGID);
-	 displacements[counter] = cellLID;
-	 ++counter;
-      }
-
-      // Create a derived MPI datatype and commit it:
-      if (MPI_Type_create_indexed_block(globalIDs.size(),1,displacements,basicDatatype,&datatype) != MPI_SUCCESS) {
-	 std::cerr << "(USERDATAWRAPPER) FATAL ERROR: Failed to create MPI datatype!" << std::endl;
-	 exit(1);
-      }
-      MPI_Type_commit(&datatype);
-      delete [] displacements; displacements = NULL;
-   }
-   
-   /** Get a derived MPI datatype that will transfer the given cells with a single send (or receive).
-    * This function calls MPI_Type_commit for the newly created datatype, MPI_Type_free must be called elsewhere.
-    * @param cellIDs List of (global ID, localID) pairs of transferred cells.
-    * @param disps Array in which calculated array displacements are to be stored.
-    * @param datatype Variable in which the derived datatype is to be written.*/
-   template<typename T> inline
-   void UserDataWrapper<T>::getDatatype(const std::map<CellID,CellID>& cellIDs,int* disps,MPI_Datatype& datatype) {
-      // For each (globalID,localID) pair store the offset (relative to MPI_BOTTOM) into array to disps:
-      size_t counter = 0;
-      for (std::map<CellID,CellID>::const_iterator it=cellIDs.begin(); it!=cellIDs.end(); ++it) {
-	 disps[counter] = it->second;
-	 ++counter;
-      }
-      
-      // Commit the datatype:
-      if (MPI_Type_create_indexed_block(cellIDs.size(),1,disps,basicDatatype,&datatype) != MPI_SUCCESS) {
-	 std::cerr << "(USERDATAWRAPPER) FATAL ERROR: Failed to create MPI datatype!" << std::endl;
-	 exit(1);
-      }
-      MPI_Type_commit(&datatype);
-   }
-      
-   /** Initialize UserDataWrapper. Memory for UserDataWrapper::array is allocated here.
-    * @param pargrid Pointer to ParGrid class that called this function.
-    * @param name Name of the user data array.
-    * @param N_cells Number of cells in the array, should be equal to the total number of cells 
-    * on this process (local + remote).
-    * @param N_elements How many values of byte size byteSize are allocated per cell. This makes it 
-    * possible to allocate, say, five doubles per cell.
-    * @param byteSize Byte size of single value, i.e. sizeof(double) for doubles.*/
-   template<typename T> inline
-   void UserDataWrapper<T>::initialize(ParGrid<T>* pargrid,const std::string& name,size_t N_cells,unsigned int N_elements,unsigned int byteSize) {
-      this->pargrid = pargrid;
-      this->name = name;
-      this->byteSize = byteSize;
-      this->N_elements = N_elements;
-      this->N_cells = N_cells;
-      array = new char[N_cells*N_elements*byteSize];
-      
-      // Create an MPI datatype that transfers a single array element. This makes 
-      // it possible to address larger memory spaces.
-      MPI_Type_contiguous(N_elements*byteSize,MPI_Type<char>(),&basicDatatype);
-      MPI_Type_commit(&basicDatatype);
-   }
-   
-   // *************************************************
-   // ***** PARCELL TEMPLATE FUNCTION DEFINITIONS *****
-   // *************************************************
-   
-   template<class C> inline
-   ParCell<C>::ParCell() { }
-   
-   template<class C> inline
-   ParCell<C>::~ParCell() { }
-
-   template<class C> inline
-   void ParCell<C>::getData(bool sending,TransferID ID,int receivesPosted,int receiveCount,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types) {
-      userData.getData(sending,ID,receivesPosted,receiveCount,blockLengths,displacements,types);
-   }
-   
-   template<class C> inline
-   unsigned int ParCell<C>::getDataElements(TransferID ID) const {
-      return userData.getDataElements(ID);
-   }
-   
-   template<class C> inline
-   void ParCell<C>::getMetadata(TransferID ID,int* blockLengths,MPI_Aint* displacements,MPI_Datatype* types) {
-      userData.getMetadata(ID,blockLengths,displacements,types);
-   }
-   
-   template<class C> inline
-   unsigned int ParCell<C>::getMetadataElements(TransferID ID) const {
-      return userData.getMetadataElements(ID);
-   }
-   
-   // *************************************************
-   // ***** STENCIL TEMPLATE FUNCTION DEFINITIONS *****
-   // *************************************************
-
-   /** Default constructor for TypeWrapper. Sets type to MPI_DATATYPE_NULL.*/
-   template<class C> inline
-   Stencil<C>::TypeWrapper::TypeWrapper(): type(MPI_DATATYPE_NULL) { }
-   
-   /** Copy-constructor for TypeWrapper. Makes a copy of MPI datatype with 
-    * MPI_Type_dup unless the given datatype is MPI_DATATYPE_NULL.
-    * @param tw TypeWrapper to be copied.*/
-   template<class C> inline
-   Stencil<C>::TypeWrapper::TypeWrapper(const Stencil<C>::TypeWrapper& tw) {
-      if (tw.type != MPI_DATATYPE_NULL) MPI_Type_dup(tw.type,&type);
-      else type = MPI_DATATYPE_NULL;
-   }
-   
-   /** Destructor for TypeWrapper. Frees the MPI datatype with MPI_Type_free 
-    * unless the datatype is MPI_DATATYPE_NULL.*/
-   template<class C> inline
-   Stencil<C>::TypeWrapper::~TypeWrapper() {
-      if (type != MPI_DATATYPE_NULL) MPI_Type_free(&type);
-   }
-   
-   /** Assignment operator for TypeWrapper. Makes a copy of the given MPI datatype 
-    * with MPI_Type_dup, unless the given datatype is MPI_DATATYPE_NULL. Also frees 
-    * the current datatype with MPI_DATATYPE_NULL if necessary.
-    * @param tw TypeWrapper to make copy of.
-    * @return Reference to this TypeWrapper.*/
-   template<class C> inline
-   typename Stencil<C>::TypeWrapper& Stencil<C>::TypeWrapper::operator=(const Stencil<C>::TypeWrapper& tw) {
-      if (type != MPI_DATATYPE_NULL) MPI_Type_free(&type);
-      if (tw.type == MPI_DATATYPE_NULL) type = MPI_DATATYPE_NULL;
-      else MPI_Type_dup(tw.type,&type);
-      return *this;
-   }
-
-   /** Default constructor for RecvBuffer. Sets array pointers to NULL.*/
-   template<class C> inline
-   Stencil<C>::RecvBuffer::RecvBuffer(): offsetsSize(0),bufferSize(0),elementSize(0),offsets(NULL),buffer(NULL) { }
-
-   /** RecvBuffer copy-constructor. Allocates new offsets and buffer arrays.*/
-   template<class C> inline
-   Stencil<C>::RecvBuffer::RecvBuffer(const RecvBuffer& rbuffer) {
-      offsetsSize = rbuffer.offsetsSize;
-      bufferSize = rbuffer.offsetsSize;
-      elementSize = rbuffer.elementSize;
-      offsets = new unsigned int[offsetsSize];
-      buffer  = new char[bufferSize];
-      for (size_t i=0; i<offsetsSize; ++i) offsets[i] = rbuffer.offsets[i];
-      for (size_t i=0; i<bufferSize; ++i) buffer[i] = rbuffer.buffer[i];
-   }
-   
-   /** Destructor for RecvBuffer. Calls delete for arrays.*/
-   template<class C> inline
-   Stencil<C>::RecvBuffer::~RecvBuffer() {
-      delete [] offsets; offsets = NULL;
-      delete [] buffer; buffer = NULL;
-   }
-
-   /** Default constructor.*/
-   template<class C> inline
-   Stencil<C>::Stencil() { }
-
-   /** Destructor. Frees all MPI datatypes and deallocates arrays.*/
-   template<class C> inline
-   Stencil<C>::~Stencil() {
-      // Delete MPI Requests:
-      for (typename std::map<unsigned int,TypeInfo>::iterator i=typeInfo.begin(); i!=typeInfo.end(); ++i) {
-	 delete [] i->second.requests; i->second.requests = NULL;
-      }
-      // Delete receive buffers:
-      for (typename std::map<DataID,RecvBuffer*>::iterator it=recvBuffers.begin(); it!=recvBuffers.end(); ++it) {
-	 delete it->second;
-	 it->second = NULL;
-      }
-   }
-   
-   /** Add a transfer to Stencil.
-    * @param transfer ID number of the transfer.
-    * @param recalculate If true the associated MPI datatypes should be recalculated
-    * every time transfers are started.
-    * @return If true, transfer was added to Stencil successfully.*/
-   template<class C> inline
-   bool Stencil<C>::addTransfer(TransferID transferID,bool recalculate) {
-      if (initialized == false) return false;
-      if (typeCaches.find(transferID) != typeCaches.end()) return false;
-      typeCaches[transferID];
-      typeInfo[transferID].typeVolatile = recalculate;
-      typeInfo[transferID].requests = NULL;
-      typeInfo[transferID].started = false;
-      typeInfo[transferID].userDataID = parGrid->invalidDataID();
-      calcTypeCache(transferID);
-      return true;
-   }
-   
-   /** Add a transfer for user-defined ParGrid data array.
-    * @param userDataID ID number of the user data array.
-    * @param transfer ID number of the transfer.
-    * @param recalculate If true the associated MPI datatypes should be recalculated 
-    * every time transfers are started.
-    * @return If true, transfer was added to Stencil successfully.*/
-   template<class C> inline
-   bool Stencil<C>::addUserDataTransfer(DataID userDataID,TransferID transferID,bool recalculate) {
-      if (initialized == false) return false;
-      if (typeCaches.find(transferID) != typeCaches.end()) {
-	 return false;
-      }
-      typeCaches[transferID];
-      typeInfo[transferID].typeVolatile = recalculate;
-      typeInfo[transferID].requests = NULL;
-      typeInfo[transferID].started = false;
-      typeInfo[transferID].userDataID = userDataID;
-      calcTypeCache(transferID);
-      return true;
-   }
-
-   /** Calculate send and receive lists for this Stencil.
-    * @return If true, send and receive lists were calculated successfully.*/
-   template<class C> inline
-   bool Stencil<C>::calcLocalUpdateSendsAndReceives() {
-      if (initialized == false) return false;
-      bool success = true;
-      clear();
-
-      // Iterate over all local cells' neighbours. If the neighbour is not in 
-      // sentNbrTypeIDs or receivedNbrTypeIDs, skip it.
-      // If the neighbour is remote, add the local cell into sends and the neighbour into recvs. 
-      // All local cells with one or more remote neighbours are inserted into boundaryCells.
-      // Cells with zero remote neighbours are inserted into innerCells instead.
-      const std::vector<CellID>& globalIDs = parGrid->getGlobalIDs();
-      for (CellID i=0; i<parGrid->getNumberOfLocalCells(); ++i) {
-	 unsigned int N_remoteNeighbours = 0;
-	 CellID* nbrIDs = parGrid->getCellNeighbourIDs(i);
-	 for (size_t nbr=0; nbr<N_neighbours; ++nbr) {
-	    // Check that neighbour exists and that it is not local:
-	    const CellID nbrLocalID = nbrIDs[nbr];
-	    if (nbrLocalID == parGrid->invalid()) continue;
-	    const MPI_processID nbrHost = parGrid->getHosts()[nbrLocalID];
-	    if (nbrHost == parGrid->getRank()) continue;
-	    const CellID nbrGlobalID = globalIDs[nbrLocalID];
-	    
-	    // If neighbour type ID is in sentNbrTypeIDs, add a send.
-	    if (std::find(sentNbrTypeIDs.begin(),sentNbrTypeIDs.end(),nbr) != sentNbrTypeIDs.end()) {
-	       if (stencilType == localToRemoteUpdates)	sends[nbrHost].insert(globalIDs[i]);
-	       else sends[nbrHost].insert(nbrGlobalID);
-	    }
-
-	    // If neighbour type ID is in receivedNbrTypeIDs, add a receive:
-	    if (std::find(receivedNbrTypeIDs.begin(),receivedNbrTypeIDs.end(),nbr) != receivedNbrTypeIDs.end()) {
-	       if (stencilType == localToRemoteUpdates) {
-		  recvs[nbrHost].insert(nbrGlobalID);
-	       } else {
-		  recvs[nbrHost].insert(globalIDs[i]);
-		  recvCounts[globalIDs[i]].insert(nbrHost);
-	       }
-	       ++N_remoteNeighbours;
-	    }
-	 }
-	 // Add local cell either into innerCells or boundaryCells:
-	 if (N_remoteNeighbours == 0) innerCells.push_back(i);
-	 else boundaryCells.push_back(i);
-      }
-      return success;
-   }
-
-   /** Calculate MPI datatype cache for given transfer identifier.
-    * @param ID Transfer ID whose cache is to be (re)calculated.
-    * @return If true, cache was (re)calculated successfully.*/
-   template<class C> inline
-   bool Stencil<C>::calcTypeCache(TransferID transferID) {
-      typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
-      if (info == typeInfo.end()) return false;
-      
-      int* blockLengths       = NULL;
-      MPI_Aint* displacements = NULL;
-      MPI_Datatype* types     = NULL;
-
-      // Free old datatypes:
-      typename std::map<TransferID,std::map<MPI_processID,TypeCache> >::iterator it=typeCaches.find(transferID);
-      for (typename std::map<MPI_processID,TypeCache>::iterator jt=it->second.begin(); jt!=it->second.end(); ++jt) {
-	 jt->second.sends.clear();
-	 jt->second.recvs.clear();
-      }
-      
-      // Delele old MPI_Requests:
-      delete [] info->second.requests; info->second.requests = NULL;
-      
-      // Remove old process entries from typeCache:
-      it->second.clear();
-      
-      // Insert entry for each neighbouring process:
-      for (std::map<MPI_processID,std::set<CellID> >::const_iterator i=sends.begin(); i!=sends.end(); ++i) {
-	 (it->second)[i->first];
-      }
-      for (std::map<MPI_processID,std::set<CellID> >::const_iterator i=recvs.begin(); i!=recvs.end(); ++i) {
-	 (it->second)[i->first];
-      }
-      
-      // Insert entry to recvBuffers, if one does not already exist:
-      if (stencilType == remoteToLocalUpdates) if (info->second.userDataID != parGrid->invalidDataID()) {
-	 // Allocate offset array for each local boundary cell and 
-	 // calculate offsets into receive buffer. New RecvBuffer is not 
-	 // allocated if one already exists:
-	 std::pair<typename std::map<DataID,RecvBuffer*>::iterator,bool> result 
-	   = recvBuffers.insert(std::make_pair(info->second.userDataID,(RecvBuffer*)NULL));
-
-	 // Allocate arrays if a new RecvBuffer was created:
-	 if (result.second == true) {
-	    result.first->second = new RecvBuffer();
-	    result.first->second->offsetsSize = recvCounts.size()+1;
-	    result.first->second->offsets = new unsigned int[recvCounts.size()+1];
-	    unsigned int* offsets = result.first->second->offsets;
-	    offsets[0] = 0;
-	    for (size_t cell=0; cell<boundaryCells.size(); ++cell) {
-	       offsets[cell+1] = offsets[cell] + recvCounts[parGrid->getGlobalIDs()[boundaryCells[cell]]].size();
-	    }
-
-	    // Allocate memory for receive buffer:
-	    const size_t N_receivedCells = offsets[recvCounts.size()];
-	    const size_t elementByteSize = parGrid->getUserDataElementSize(info->second.userDataID);
-	    if (elementByteSize == 0) {
-	    std::cerr << "(PARGRID) Stencil::calcTypeCache ERROR: User data array element size is zero!" << std::endl;
-	       exit(1);
-	    }
-	    result.first->second->bufferSize = N_receivedCells*elementByteSize;
-	    result.first->second->buffer = new char[N_receivedCells*elementByteSize];
-	    result.first->second->elementSize = elementByteSize;
-	 }
-      }
-
-      // Create MPI datatypes for sending and receiving data:
-      info->second.N_receives = 0;
-      info->second.N_sends    = 0;
-      std::map<CellID,int> receivesPosted;
-      for (typename std::map<MPI_processID,TypeCache>::iterator jt=it->second.begin(); jt!=it->second.end(); ++jt) {
-	 // Allocate arrays for MPI datatypes:
-	 size_t N_recvs = 0;
-	 std::map<MPI_processID,std::set<pargrid::CellID> >::const_iterator tmp = recvs.find(jt->first);
-	 if (tmp != recvs.end()) N_recvs = tmp->second.size();	 
-	 size_t N_sends = 0;
-	 tmp = sends.find(jt->first);
-	 if (tmp != sends.end()) N_sends = tmp->second.size();
-
-	 if (info->second.userDataID == parGrid->invalidDataID()) { // Use old ParGrid data -- defined in template class C:
-	    blockLengths = new int[std::max(N_recvs,N_sends)];
-	    displacements = new MPI_Aint[std::max(N_recvs,N_sends)];
-	    types = new MPI_Datatype[std::max(N_recvs,N_sends)];
-	 
-	    // Get displacements from cells receiving data:
-	    int counter = 0;
-	    C dummy;
-	    const unsigned int N_dataElements = dummy.getDataElements(transferID);
-	    for (std::set<CellID>::const_iterator i=recvs[jt->first].begin(); i!=recvs[jt->first].end(); ++i) {
-	       const CellID localID = parGrid->getLocalID(*i);
-	       const bool sendingData = false;
-	    
-               #ifndef NDEBUG
-	          if (stencilType == remoteToLocalUpdates) {
-		     std::map<CellID,std::set<MPI_processID> >::const_iterator countIt = recvCounts.find(*i);
-		     if (countIt == recvCounts.end()) {
-			std::cerr << "(PARGRID) ERROR: recvCounts does not have an entry for local cell with GID #" << *i << std::endl;
-			exit(1);
-		     }
-		  }
-              #endif
-	    
-	       switch (stencilType) {
-		case localToRemoteUpdates:
-		  (*parGrid)[localID]->getData(sendingData,it->first,-1,-1,blockLengths+counter*N_dataElements,
-					       displacements+counter*N_dataElements,types+counter*N_dataElements);
-		  break;
-		case remoteToLocalUpdates:
-		  (*parGrid)[localID]->getData(sendingData,it->first,receivesPosted[*i],recvCounts[*i].size(),blockLengths+counter*N_dataElements,
-					       displacements+counter*N_dataElements,types+counter*N_dataElements);
-		  ++receivesPosted[*i];
-	       break;
-	       }
-	       ++counter;
-	    }
-	 
-	    // Create MPI datatype for receiving all data at once from process jt->first.
-	    // A receive is inserted only if there are data to receive:
-	    if (N_recvs > 0) {
-	       jt->second.recvs.push_back(TypeWrapper());
-	       MPI_Type_create_struct(N_recvs,blockLengths,displacements,types,&(jt->second.recvs.back().type));
-	       MPI_Type_commit(&(jt->second.recvs.back().type));
-	       ++info->second.N_receives;
-	    }
-	    
-	    // Get displacements from cells sending data:
-	    counter = 0;
-	    for (std::set<CellID>::const_iterator i=sends[jt->first].begin(); i!=sends[jt->first].end(); ++i) {
-	       const CellID localID = parGrid->getLocalID(*i);
-	       const bool sendingData = true;
-	       const int dummyRecvCount = 0;
-	       (*parGrid)[localID]->getData(sendingData,it->first,dummyRecvCount,dummyRecvCount,blockLengths+counter*N_dataElements,
-					    displacements+counter*N_dataElements,types+counter*N_dataElements);
-	       ++counter;
-	    }
-
-	    // Create MPI datatype for sending all data at once to process jt->first.
-	    // A send is inserted only if there are data to send:
-	    if (N_sends > 0) {
-	       jt->second.sends.push_back(TypeWrapper());
-	       MPI_Type_create_struct(N_sends,blockLengths,displacements,types,&(jt->second.sends.back().type));
-	       MPI_Type_commit(&(jt->second.sends.back().type));
-	       ++info->second.N_sends;
-	    }
-	    delete [] blockLengths; blockLengths = NULL;
-	    delete [] displacements; displacements = NULL;
-	    delete [] types; types = NULL;
-	 } else { // User data array in ParGrid
-	    // Create MPI datatype for receiving all user data, associated with given 
-	    // transfer ID, at once from process jt->first:
-	    if (N_recvs > 0) {
-	       // Allocate arrays for creating derived MPI datatype:
-	       MPI_Datatype basicType;
-	       RecvBuffer* rbuffer = NULL;
-	       int* disps = NULL;
-	       jt->second.recvs.push_back(TypeWrapper());
-
-	       switch (stencilType) {
-		case localToRemoteUpdates:
-		  parGrid->getUserDatatype(info->second.userDataID,recvs[jt->first],jt->second.recvs.back().type,false);
-		  break;
-		case remoteToLocalUpdates:
-		  // Create MPI derived datatype that transfers user data of single cell:
-		  typename std::map<DataID,RecvBuffer*>::iterator tmp = recvBuffers.find(info->second.userDataID);
-		  #ifndef NDEBUG
-		     if (tmp == recvBuffers.end()) {
-			std::cerr << "(PARGRID) Stencil::calcTypeCache ERROR: Could not find RecvBuffer!" << std::endl;
-			exit(1);
-		     }
-		  #endif
-		  rbuffer = tmp->second;
-		  MPI_Type_contiguous(rbuffer->elementSize,MPI_Type<char>(),&basicType);
-		  MPI_Type_commit(&basicType);
-		  
-		  // Allocate memory for displacements array, and calculate displacements 
-		  // into receive buffer for cells received from process jt->first:
-		  disps = new int[recvs[jt->first].size()];
-		  size_t counter = 0;
-		  for (std::set<CellID>::const_iterator i=recvs[jt->first].begin(); i!=recvs[jt->first].end(); ++i) {
-		     const CellID localID      = parGrid->getLocalID(*i);
-		     std::vector<CellID>::const_iterator ptr = std::find(boundaryCells.begin(),boundaryCells.end(),localID);
-		     #ifndef NDEBUG
-		        if (ptr == boundaryCells.end()) {
-			   std::cerr << "(PARGRID) Stencil::calcTypeCache ERROR: could not find offset into recv buffer!" << std::endl; 
-			   exit(1);
-		        }
-		     #endif
-		     const unsigned int offset = (rbuffer->offsets)[ptr - boundaryCells.begin()];
-		     
-		     disps[counter] = offset + receivesPosted[*i];
-		     ++counter;
-		     ++receivesPosted[*i];
-		  }
-		  
-		  #ifndef NDEBUG
-		     for (size_t index=0; index<recvs[jt->first].size(); ++index) {
-			if (disps[index] >= rbuffer->bufferSize) {
-			   std::cerr << "(PARGRID) Stencil::calcTypeCache ERROR: calculated displacement into buffer too large!" << std::endl; 
-			   exit(1);
-			}
-		     }
-		  #endif
-
-		  // Create MPI datatype for receiving all data at once from process jt->second:
-		  MPI_Type_create_indexed_block(recvs[jt->first].size(),1,disps,basicType,&(jt->second.recvs.back().type));
-		  MPI_Type_commit(&(jt->second.recvs.back().type));
-		  break;
-	       }
-	       ++info->second.N_receives;
-	       delete [] disps; disps = NULL;
-	    }
-
-	    // Create MPI datatype for sending all user data, associated with given
-	    // transfer ID, at once to process jt->first:
-	    if (N_sends > 0) {
-	       jt->second.sends.push_back(TypeWrapper());
-	       switch (stencilType) {
-		case localToRemoteUpdates:
-		  parGrid->getUserDatatype(info->second.userDataID,sends[jt->first],jt->second.sends.back().type,false);
-		  break;
-		case remoteToLocalUpdates:
-		  parGrid->getUserDatatype(info->second.userDataID,sends[jt->first],jt->second.sends.back().type,true);
-		  break;
-	       }
-	       ++info->second.N_sends;
-	    }
-	 }
-      }
-      
-      // Allocate enough MPI requests:
-      info->second.requests = new MPI_Request[info->second.N_receives+info->second.N_sends];
-      return true;
-   }
-
-   /** Clear some of Stencil internal variables.*/
-   template<class C> inline
-   void Stencil<C>::clear() {
-      boundaryCells.clear();
-      innerCells.clear();
-      recvs.clear();
-      sends.clear();
-      recvCounts.clear();
-   }
-   
-   /** Get boundary cell list for this Stencil.
-    * @return Vector containing boundary cell local IDs.*/
-   template<class C> inline
-   const std::vector<CellID>& Stencil<C>::getBoundaryCells() const {return boundaryCells;}
-   
-   /** Get inner cell list for this Stencil.
-    * @return Vector containing inner cell local IDs.*/
-   template<class C> inline
-   const std::vector<CellID>& Stencil<C>::getInnerCells() const {return innerCells;}
-   
-   /** Get offset and buffer array for given user-defined ParGrid data array. This 
-    * function should only be called for StencilType::remoteToLocalUpdates.
-    * @param userDataID ID number of the user-defined data array.
-    * @param offsets Address of offsets array is copied to this variable.
-    * @param buffer Address of receive buffer array is copied to this variable.
-    * @return If true, offsets and buffer variables contain valid values.*/
-   template<class C> inline
-   bool Stencil<C>::getRemoteUpdates(DataID userDataID,unsigned int*& offsets,char*& buffer) const {
-      if (stencilType != remoteToLocalUpdates) return false;
-      typename std::map<DataID,RecvBuffer*>::const_iterator it = recvBuffers.find(userDataID);
-      if (it == recvBuffers.end()) return false;
-      offsets = it->second->offsets;
-      buffer  = it->second->buffer;
-      return true;
-   }
-   
-   /** Initialize Stencil.
-    * @param parGrid Pointer to ParGrid.
-    * @param stencilType Type of the Stencil.
-    * @param receives List of received neighbours' type IDs.
-    * @return If true, Stencil initialized successfully.*/
-   template<class C> inline
-   bool Stencil<C>::initialize(ParGrid<C>& parGrid,StencilType stencilType,const std::vector<NeighbourID>& receives) {
-      initialized = false;
-      this->parGrid = &parGrid;
-      this->stencilType = stencilType;
-      this->receivedNbrTypeIDs = receives;
-      sentNbrTypeIDs.reserve(receives.size());
-      
-      // Send stencil is the inverse of receive stencil:
-      int i_off = 0;
-      int j_off = 0;
-      int k_off = 0;
-      for (size_t i=0; i<receives.size(); ++i) {
-	 parGrid.calcNeighbourOffsets(receives[i],i_off,j_off,k_off);
-	 i_off *= -1;
-	 j_off *= -1;
-	 k_off *= -1;
-	 sentNbrTypeIDs.push_back(parGrid.calcNeighbourTypeID(i_off,j_off,k_off));
-      }
-
-      // Sort vectors containing sent and received neighbour types:
-      std::sort(sentNbrTypeIDs.begin(),sentNbrTypeIDs.end());
-      std::sort(receivedNbrTypeIDs.begin(),receivedNbrTypeIDs.end());
-      
-      // Calculate requested stencil:
-      initialized = true;
-      if (update() == false) initialized = false;
-      return initialized;
-   }
-   
-   /** Remove transfer with given identifier from Stencil.
-    * @param ID Identifier of the removed transfer.
-    * @return If true, transfer was removed successfully.*/
-   template<class C> inline
-   bool Stencil<C>::removeTransfer(TransferID transferID) {
-      // Check that transfer exists:
-      if (initialized == false) return false;
-      if (typeCaches.find(transferID) == typeCaches.end()) return false;
-
-      // Erase transfer:
-      typeCaches.erase(transferID);
-      typeInfo.erase(transferID);
-      return true;
-   }
-
-   /** Remove all transfers in this Stencil associated with the given user data array.
-    * @param userDataID ID number of the user data array.
-    * @return If true, all transfers were removed successfully.*/
-   template<class C> inline
-   bool Stencil<C>::removeUserDataTransfers(DataID userDataID) {
-      // Iterate over all entries in typeInfo. If a transfer exists and 
-      // is associated with the given userDataID, erase it from typeInfo 
-      // and typeCaches:
-      typename std::map<TransferID,TypeInfo>::iterator it=typeInfo.begin();
-      while (it != typeInfo.end()) {
-	 if (it->second.userDataID == userDataID) {
-	    typename std::map<TransferID,TypeInfo>::iterator tmp = it;
-	    ++tmp;
-	    typeCaches.erase(it->first);
-	    typeInfo.erase(it);
-	    it = tmp;
-	    continue;
-	 }
-	 ++it;
-      }
-      // Erase RecvBuffer associated with this user data:
-      typename std::map<DataID,RecvBuffer*>::iterator jt = recvBuffers.find(userDataID);
-      if (jt != recvBuffers.end()) {
-	 delete jt->second;
-	 jt->second = NULL;
-	 recvBuffers.erase(jt);
-      }
-      return true;
-   }
-   
-   template<class C> inline
-   bool Stencil<C>::startTransfer(TransferID transferID) {
-      typename std::map<TransferID,std::map<MPI_processID,TypeCache> >::iterator it = typeCaches.find(transferID);
-      typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
-      if (it == typeCaches.end()) return false;
-
-      if (info->second.typeVolatile == true) calcTypeCache(transferID);
-      
-      // Post sends and receives:
-      unsigned int counter = 0;
-      MPI_Request* requests = info->second.requests;
-      for (typename std::map<MPI_processID,TypeCache>::iterator proc=it->second.begin(); proc!=it->second.end(); ++proc) {
-	 if (info->second.userDataID == parGrid->invalidDataID()) {
-	    for (size_t i=0; i<proc->second.recvs.size(); ++i) {
-	       MPI_Irecv(MPI_BOTTOM,1,proc->second.recvs[i].type,proc->first,proc->first,parGrid->getComm(),requests+counter);
-	       ++counter;
-	    }
-	    for (size_t i=0; i<proc->second.sends.size(); ++i) {
-	       MPI_Isend(MPI_BOTTOM,1,proc->second.sends[i].type,proc->first,parGrid->getRank(),parGrid->getComm(),requests+counter);
-	       ++counter;
-	    }
-	 } else {
-	    // Get send and receive buffers -- these are different for StencilType::remoteToLocalUpdates
-	    void* rcvBuffer = NULL;
-	    void* sndBuffer = NULL;
-	    if (stencilType == localToRemoteUpdates) {
-	       rcvBuffer = parGrid->getUserData(info->second.userDataID);
-	       sndBuffer = rcvBuffer;
-	    } else {
-	       sndBuffer = parGrid->getUserData(info->second.userDataID);
-	       typename std::map<DataID,RecvBuffer*>::iterator it = recvBuffers.find(info->second.userDataID);
-	       if (it != recvBuffers.end()) rcvBuffer = it->second->buffer;
-	    }
-	    
-	    #ifndef NDEBUG
-	       if (rcvBuffer == NULL) {
-		  std::cerr << "(STENCIL) ERROR: User data ID #" << info->second.userDataID << " NULL recv buffer!" << std::endl; exit(1);
-	       }
-	       if (sndBuffer == NULL) {
-		  std::cerr << "(STENCIL) ERROR: User data ID #" << info->second.userDataID << " NULL send buffer!" << std::endl; exit(1);
-	       }
-	    #endif
-	    
-	    for (size_t i=0; i<proc->second.recvs.size(); ++i) {
-	       MPI_Irecv(rcvBuffer,1,proc->second.recvs[i].type,proc->first,proc->first,parGrid->getComm(),requests+counter);
-	       ++counter;
-	    }
-	    for (size_t i=0; i<proc->second.sends.size(); ++i) {
-	       MPI_Isend(sndBuffer,1,proc->second.sends[i].type,proc->first,parGrid->getRank(),parGrid->getComm(),requests+counter);
-	       ++counter;
-	    }
-	 }
-      }
-      info->second.started = true;
-      return true;
-   }
-   
-   template<class C> inline
-   bool Stencil<C>::update() {
-      if (initialized == false) return false;
-      
-      // Deallocate RecvBuffers:
-      for (typename std::map<DataID,RecvBuffer*>::iterator it=recvBuffers.begin(); it!=recvBuffers.end(); ++it) {
-	 delete it->second; 
-	 it->second = NULL;
-      }
-      recvBuffers.clear();
-      
-      // Recalculate new send & recv lists:
-      bool success = calcLocalUpdateSendsAndReceives();
-      
-      // Recalculate MPI datatype caches:
-      for (typename std::map<TransferID,std::map<MPI_processID,TypeCache> >::iterator it=typeCaches.begin(); it!=typeCaches.end(); ++it) 
-	calcTypeCache(it->first);
-      return success;
-   }
-   
-   /** Wait for specified transfer to complete. This function waits 
-    * for both sends and receives.
-    * @param ID Identifier of the transfer.
-    * @return If true, transfer has been completed successfully. Value false 
-    * may also mean that speciefied transfer has not been initiated.*/
-   template<class C> inline
-   bool Stencil<C>::wait(TransferID transferID) {
-      typename std::map<TransferID,TypeInfo>::iterator info = typeInfo.find(transferID);
-      if (info == typeInfo.end()) return false;
-      if (info->second.started == false) return false;
-      MPI_Waitall(info->second.N_receives+info->second.N_sends,info->second.requests,MPI_STATUSES_IGNORE);
-      return true;
-   }
-   
-   // *************************************************
-   // ***** PARGRID TEMPLATE FUNCTION DEFINITIONS *****
-   // *************************************************
    
    /** Constructor for ParGrid. Initializes Zoltan. Note that MPI_Init must 
     * have been called prior to calling ParGrid constructor.
@@ -1207,6 +231,7 @@ namespace pargrid {
       recalculateInteriorCells = true;
       recalculateExteriorCells = true;
       N_localCells = 0;
+      N_totalCells = 0;
       partitioningCounter = 0;
       
       #ifdef PROFILE
@@ -1216,6 +241,8 @@ namespace pargrid {
          profTotalLB   = -1;
          profUserData  = -1;
          profDynamicData = -1;
+         profDynamicDataMPI = -1;
+         profDynamicDataOld = -1;
          profStencilRecalc = -1;
       #endif
    }
@@ -1238,7 +265,6 @@ namespace pargrid {
       // Check that the cell doesn't already exist:
       if (global2LocalMap.find(cellID) != global2LocalMap.end()) return false;
       global2LocalMap[cellID] = N_localCells;
-      cells.push_back(ParCell<C>());
       hosts.push_back(getRank());
       globalIDs.push_back(cellID);
       
@@ -1246,7 +272,6 @@ namespace pargrid {
       const size_t offset = cellNeighbours.size();
       const size_t flagOffset = neighbourFlags.size();
       cellNeighbours.insert(cellNeighbours.end(),N_neighbours,invalid());
-      cellNeighbourTypes.insert(cellNeighbourTypes.end(),N_neighbours,calcNeighbourTypeID(0,0,0));
       neighbourFlags.insert(neighbourFlags.end(),0);
             
       uint32_t nbrFlag = (1 << calcNeighbourTypeID(0,0,0));
@@ -1255,13 +280,13 @@ namespace pargrid {
 	 if (nbrIDs[n] == invalid()) success = false;
 	 
 	 cellNeighbours[offset+nbrTypes[n]]     = nbrIDs[n];
-	 cellNeighbourTypes[offset+nbrTypes[n]] = nbrTypes[n];
 	 nbrFlag = (nbrFlag | (1 << nbrTypes[n]));
       }
       neighbourFlags[flagOffset] = nbrFlag;
       cellNeighbours[offset+calcNeighbourTypeID(0,0,0)] = cellID;
       
       ++N_localCells;
+      ++N_totalCells;
       return success;
    }
    
@@ -1288,11 +313,11 @@ namespace pargrid {
 	    } else {
 	       // Neighbour is a remote cell. Insert a local copy of the neighbour, 
 	       // and replace global ID with the new local ID:
-	       cells.push_back(ParCell<C>());
+	       ++N_totalCells;
 	       hosts.push_back(MPI_PROC_NULL);
 	       globalIDs.push_back(nbrGID);
-	       global2LocalMap[nbrGID] = cells.size()-1;
-	       cellNeighbours[i*N_neighbours+n] = cells.size()-1;
+	       global2LocalMap[nbrGID] = N_totalCells-1;
+	       cellNeighbours[i*N_neighbours+n] = N_totalCells-1;
 	    }
 	 }
       }
@@ -1345,43 +370,47 @@ namespace pargrid {
       return currentSize;
    }
    
-   template<class C> inline
-   bool ParGrid<C>::addTransfer(StencilID stencilID,TransferID transferID,bool recalculate) {
-      if (getInitialized() == false) return false;
-      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
-      if (it == stencils.end()) return false;
-      return it->second.addTransfer(transferID,recalculate);
-   }
-   
    /** Add a parallel data array to ParGrid. Basic datatype, e.g. int or double, is 
     * given as template parameter T. You still need to associate the array with a transfer 
     * if you want to synchronize neighbour data.
     * @param name Unique name for the array. Array insertion will fail if an array with 
     * the same name already exists.
     * @param N_elements Number of basic datatypes per parallel cell. For example, in 
-    * order to get an array of size five per cell, pass value five here.
+    * order to get an array of size five per cell, pass value five here. Note: this parameter 
+    * is ignored for dynamically allocated data (isDynamic==true).
+    * @param isDynamic If true, user data is dynamically allocated (=number of element per cell varies)
+    * instead of being static (=same number of elements per cell).
     * @return ID number of the new data array or invalidDataID() if array was not created.
     * @see addUserDataTransfer.*/
    template<class C> template<typename T> inline
-   DataID ParGrid<C>::addUserData(const std::string& name,unsigned int N_elements) {
-      // Check that a user data array with the given name doesn't already exist:
-      for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i] == NULL) continue;
-	 if (userData[i]->name == name) return invalidDataID();
+   DataID ParGrid<C>::addUserData(const std::string& name,unsigned int N_elements,bool isDynamic) {
+      // Check that a user data array (static or dynamic) with the given name doesn't already exist:
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator 
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second->getName() == name) return invalidDataID();
       }
-      
-      unsigned int userDataID = invalidDataID();
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second->getName() == name) return invalidDataID();
+      }
+  
+      // Assign an ID number to the array:
+      DataID userDataID = invalidDataID();
       if (userDataHoles.size() > 0) {
 	 userDataID = *userDataHoles.begin();
 	 userDataHoles.erase(userDataID);
-	 userData[userDataID] = new UserDataWrapper<C>();
       } else {
-	 userData.push_back(new UserDataWrapper<C>());
-	 userDataID = userData.size()-1;
+	 userDataID = userDataStatic.size() + userDataDynamic.size();
       }
       
-      // Add a new user data array:
-      userData[userDataID]->initialize(this,name,cells.size(),N_elements,sizeof(T));
+      // Initialize the new user data array:
+      if (isDynamic == false) {
+	 userDataStatic[userDataID] = new UserDataStatic<ParGrid<C> >();
+	 userDataStatic[userDataID]->initialize(this,name,N_totalCells,N_elements,sizeof(T));
+      } else {
+	 userDataDynamic[userDataID] = new UserDataDynamic<ParGrid<C> >();
+	 userDataDynamic[userDataID]->initialize(this,name,N_totalCells,sizeof(T));
+      }
       return userDataID;
    }
    
@@ -1390,17 +419,18 @@ namespace pargrid {
     * @param stencilID ID number of the transfer stencil. For a user-defined stencil this is the value 
     * returned by addStencil function. For the default stencil a value 0.
     * @param transferID A unique ID number for the transfer.
-    * @param recalculate If true the data array is dynamically reallocated and the MPI datatypes must be 
-    * recalculated before starting transfers.
     * @return If true, a new transfer was added successfully.*/
    template<class C> inline
-   bool ParGrid<C>::addUserDataTransfer(DataID userDataID,StencilID stencilID,TransferID transferID,bool recalculate) {
+   bool ParGrid<C>::addDataTransfer(DataID userDataID,StencilID stencilID) {
       if (getInitialized() == false) return false;
-      if (userDataID >= userData.size()) return false;
-      if (userData[userDataID] == NULL) return false;
-      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
-      if (it == stencils.end()) return false;
-      return it->second.addUserDataTransfer(userDataID,transferID,recalculate);
+      if (userDataStatic.find(userDataID) != userDataStatic.end()) {
+	 typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator it = stencils.find(stencilID);
+	 if (it == stencils.end()) return false;
+	 return it->second.addUserDataTransfer(userDataID,false);
+      } else {
+	 std::cerr << "(PARGRID) addDataTransfer not implemented for dynamically allocated data!" << std::endl;
+	 return false;
+      }
    }
    
    /** Balance load based on criteria given in ParGrid::initialize. Load balancing 
@@ -1449,11 +479,11 @@ namespace pargrid {
          profile::stop();
          profile::start("ParGrid LB",profParGridLB);
       #endif
-      
+
       // Allocate memory for new cell array and start to receive imported cells.
       // Note. N_newLocalCells is correct even if N_import and N_export contain 
       // transfers from process A to process A.
-      const double totalToLocalRatio = (1.0*cells.size()) / (N_localCells+1.0e-20);
+      const double totalToLocalRatio = (1.0*N_totalCells) / (N_localCells+1.0e-20);
       const CellID N_newLocalCells = N_localCells + N_import - N_export;
       const CellID newCapacity = static_cast<CellID>(std::ceil((totalToLocalRatio+0.1)*N_newLocalCells));
 
@@ -1463,29 +493,36 @@ namespace pargrid {
       int N_realExports = 0;
       for (int i=0; i<N_export; ++i) if (exportProcesses[i] != getRank()) ++N_realExports;
       const CellID newLocalsBegin = N_localCells - N_realExports;
+
+      // Calculate displacement arrays for imported and exported static-size data. 
+      // "Static-size" here means that all cells store the same amount of data, i.e. 
+      // the data can be transferred with indexed blocks. Import/export displacement 
+      // arrays created here are used to transfer static user data arrays and 
+      // cell neighbour IDs:
+      std::map<MPI_processID,std::vector<int> > exportDisplacements;
+      std::map<MPI_processID,std::vector<int> > importDisplacements;
+      size_t counter = newLocalsBegin;
+      for (int i=0; i<N_import; ++i) {
+	 if (importProcesses[i] == getRank()) continue;
+	 importDisplacements[importProcesses[i]].push_back(counter);
+	 ++counter;
+      }
+      for (int i=0; i<N_export; ++i) {
+	 if (exportProcesses[i] == getRank()) continue;
+	 exportDisplacements[exportProcesses[i]].push_back(exportLocalIDs[i]);
+      }
       
-      std::vector<ParCell<C> > newCells;
+      //std::vector<ParCell<C> > newCells;
       std::vector<MPI_processID> newHosts;
       std::map<CellID,CellID> newGlobal2LocalMap;
       std::vector<CellID> newGlobalIDs;
       std::vector<CellID> newCellNeighbours;
-      std::vector<NeighbourID> newCellNeighbourTypes;
       std::vector<uint32_t> newNeighbourFlags;      
-      newCells.reserve(newCapacity);
       newHosts.reserve(newCapacity);
       newGlobalIDs.reserve(newCapacity);
-      newCells.resize(N_newLocalCells);
-      newCellNeighbours.reserve(N_neighbours*N_newLocalCells);
-      newCellNeighbourTypes.reserve(N_neighbours*N_newLocalCells);
+      newCellNeighbours.resize(N_neighbours*N_newLocalCells);
       newNeighbourFlags.reserve(N_newLocalCells);
-      
-      // ********************************************************** //
-      // ***** EXCHANGE IMPORTED AND EXPORTED CELLS' METADATA ***** //
-      // ********************************************************** //
-      #ifdef PROFILE
-         profile::start("dynamic user data",profDynamicData);
-      #endif
-      
+
       // Count the number of cells exported per neighbouring process, and number of cells 
       // imported per neighbouring process. All data needs to be sent (and received) with a 
       // single MPI call per remote neighbour, otherwise unexpected message buffers may run out!
@@ -1499,297 +536,47 @@ namespace pargrid {
       exportsPerProcess.erase(getRank());
       importsPerProcess.erase(getRank());
       
-      size_t counter = 0;
-      
-      // Allocate enough MPI Requests for sends and receives used in cell migration:
-      size_t recvSize = std::max(2*nbrProcesses.size(),static_cast<size_t>(N_import));
-      size_t sendSize = std::max(2*nbrProcesses.size(),static_cast<size_t>(N_export));
-      recvRequests.resize(recvSize);
-      sendRequests.resize(sendSize);
-
-      // Get the number of metadata elements per cell:
-      ParCell<C> dummy;
-      unsigned int N_metadataElements = dummy.getMetadataElements(0);
-      
-      // Create temporary arrays for metadata incoming from each importing process:
-      std::vector<MPI_Datatype*> datatypes(importsPerProcess.size());
-      std::vector<int*> blockLengths(importsPerProcess.size());
-      std::vector<MPI_Aint*> displacements(importsPerProcess.size());
-      std::map<MPI_processID,size_t> processIndices;
-      std::vector<size_t> indices(importsPerProcess.size());
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
-	 datatypes[counter]        = new MPI_Datatype[N_metadataElements*it->second];
-	 blockLengths[counter]     = new int[N_metadataElements*it->second];
-	 displacements[counter]    = new MPI_Aint[N_metadataElements*it->second];
-	 processIndices[it->first] = counter;
-	 indices[counter]          = 0;
-	 ++counter;
-      }      
-      
-      // Get metadata for imported cells. In practice we fetch addresses where
-      // incoming metadata is to be written:
-      counter = 0;
-      for (int i=0; i<N_import; ++i) {
-	 if (importProcesses[i] == getRank()) continue;
-	 const int identifier = 0;
-	 const unsigned int procIndex = processIndices[importProcesses[i]];
-	 const unsigned int arrayIndex = indices[procIndex];
-	 newCells[newLocalsBegin+counter].getMetadata(identifier,blockLengths[procIndex]+arrayIndex,displacements[procIndex]+arrayIndex,datatypes[procIndex]+arrayIndex);
-	 indices[procIndex] += N_metadataElements;
-	 ++counter;
-      }
-      
-      // Create an MPI struct containing all metadata received from importing process it->first and post receives:
-      MPI_Datatype MPIdataType;
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
-	 const MPI_processID source = it->first;
-	 const int tag              = it->first;
-	 MPI_Type_create_struct(N_metadataElements*it->second,blockLengths[counter],displacements[counter],datatypes[counter],&MPIdataType);
-	 MPI_Type_commit(&MPIdataType);
-	 MPI_Irecv(MPI_BOTTOM,1,MPIdataType,source,tag,comm,&(recvRequests[counter]));
-	 MPI_Type_free(&MPIdataType);
-	 ++counter;
-      }
-      
-      // Deallocate arrays used for imported metadata:
-      for (size_t i=0; i<importsPerProcess.size(); ++i) {
-	 delete [] datatypes[i]; datatypes[i] = NULL;
-	 delete [] blockLengths[i]; blockLengths[i] = NULL;
-	 delete [] displacements[i]; displacements[i] = NULL;
-      }
-      
-      // Allocate arrays for sending metadata to export processes:
-      datatypes.resize(exportsPerProcess.size());
-      blockLengths.resize(exportsPerProcess.size());
-      displacements.resize(exportsPerProcess.size());
-      indices.resize(exportsPerProcess.size());
-      processIndices.clear();
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=exportsPerProcess.begin(); it!=exportsPerProcess.end(); ++it) {
-	 datatypes[counter]        = new MPI_Datatype[N_metadataElements*it->second];
-	 blockLengths[counter]     = new int[N_metadataElements*it->second];
-	 displacements[counter]    = new MPI_Aint[N_metadataElements*it->second];
-	 processIndices[it->first] = counter;
-	 indices[counter] = 0;
-	 ++counter;
-      }
-      
-      // Fetch metadata to send to export processes:
-      for (int i=0; i<N_export; ++i) {
-	 if (exportProcesses[i] == getRank()) continue;
-	 
-	 const int identifier = 0;
-	 const size_t procIndex = processIndices[exportProcesses[i]];
-	 const unsigned int arrayIndex = indices[procIndex];
-	 cells[exportLocalIDs[i]].getMetadata(identifier,blockLengths[procIndex]+arrayIndex,displacements[procIndex]+arrayIndex,datatypes[procIndex]+arrayIndex);
-	 indices[procIndex] += N_metadataElements;
-      }
-      
-      // Create an MPI struct containing all metadata sent to export process it->first and post send:
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=exportsPerProcess.begin(); it!=exportsPerProcess.end(); ++it) {
-	 const MPI_processID dest = it->first;
-	 const int tag            = myrank;
-	 MPI_Type_create_struct(N_metadataElements*it->second,blockLengths[counter],displacements[counter],datatypes[counter],&MPIdataType);
-	 MPI_Type_commit(&MPIdataType);
-	 MPI_Isend(MPI_BOTTOM,1,MPIdataType,dest,tag,comm,&(sendRequests[counter]));
-	 MPI_Type_free(&MPIdataType);
-	 ++counter;
-      }
-      
-      // Deallocate arrays used for MPI datatypes in cell exports:
-      for (size_t i=0; i<exportsPerProcess.size(); ++i) {
-	 delete [] datatypes[i]; datatypes[i] = NULL;
-	 delete [] blockLengths[i]; blockLengths[i] = NULL;
-	 delete [] displacements[i]; displacements[i] = NULL;
-      }
-      #ifdef PROFILE
-         profile::stop();
-      #endif
-
-      // Set new host for all exported cells, it should not matter 
-      // if cells are exported from process A to process A here:
-      for (int c=0; c<N_export; ++c) {
-	 hosts[exportLocalIDs[c]] = exportProcesses[c];
-      }
-
-      #ifdef PROFILE
-         profile::start("MPI waits",profMPI);
-      #endif
-      // Wait for metadata sends & receives to complete:
-      MPI_Waitall(importsPerProcess.size(),&(recvRequests[0]),MPI_STATUSES_IGNORE);
-      MPI_Waitall(exportsPerProcess.size(),&(sendRequests[0]),MPI_STATUSES_IGNORE);
-      #ifdef PROFILE
-         profile::stop();
-      #endif
-      
-      // ****************************************************** //
-      // ***** EXCHANGE IMPORTED AND EXPORTED CELLS' DATA ***** //
-      // ****************************************************** //
-      #ifdef PROFILE
-         profile::start("dynamic user data",profDynamicData);
-      #endif
-      const unsigned int N_dataElements = dummy.getDataElements(0) + 2;
-
-      // Swap all cells' neighbour IDs to global IDs:
+      // Swap all cells' neighbour local IDs to global IDs:
       for (CellID c=0; c<N_localCells; ++c) {
 	 for (size_t n=0; n<N_neighbours; ++n) {
 	    const CellID nbrLID = cellNeighbours[c*N_neighbours+n];
 	    if (nbrLID == invalid()) continue;
 	    cellNeighbours[c*N_neighbours+n] = globalIDs[nbrLID];
 	 }
-      }
-      
-      // Allocate arrays for MPI datatypes describing imported cell data:
-      datatypes.resize(importsPerProcess.size());
-      blockLengths.resize(importsPerProcess.size());
-      displacements.resize(importsPerProcess.size());
-      processIndices.clear();
-      indices.resize(importsPerProcess.size());
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
-	 datatypes[counter]        = new MPI_Datatype[N_dataElements*it->second];
-	 blockLengths[counter]     = new int[N_dataElements*it->second];
-	 displacements[counter]    = new MPI_Aint[N_dataElements*it->second];
-	 processIndices[it->first] = counter;
-	 indices[counter]          = 0;
-	 ++counter;
-      }
+      }       
 
-      // Fetch data to arrays describing imported data:
-      counter = 0;
-      for (int i=0; i<N_import; ++i) {
-	 if (importProcesses[i] == getRank()) continue;
-	 
-	 const bool sending = false;
-	 const int identifier = 0;
-	 const int dummyRecvCount = -1;
-	 const unsigned int procIndex = processIndices[importProcesses[i]];
-	 const unsigned int arrayIndex = indices[procIndex];
-
-	 // Imported cell's neighbour GIDs:
-	 MPI_Aint address;
-	 MPI_Get_address(&(newCellNeighbours[(newLocalsBegin+counter)*N_neighbours]),&address);
-	 blockLengths[procIndex][arrayIndex+0] = N_neighbours;
-	 displacements[procIndex][arrayIndex+0] = address;
-	 datatypes[procIndex][arrayIndex+0] = MPI_Type<CellID>();
-	 
-	 // Imported cell's neighbour type IDs:
-	 MPI_Get_address(&(newCellNeighbourTypes[(newLocalsBegin+counter)*N_neighbours]),&address);
-	 blockLengths[procIndex][arrayIndex+1] = N_neighbours;
-	 displacements[procIndex][arrayIndex+1] = address;
-	 datatypes[procIndex][arrayIndex+1] = MPI_Type<NeighbourID>();
-	 
-	 newCells[newLocalsBegin+counter].getData(sending,identifier,0,dummyRecvCount,blockLengths[procIndex]+arrayIndex+2,displacements[procIndex]+arrayIndex+2,datatypes[procIndex]+arrayIndex+2);
-	 indices[procIndex] += N_dataElements;
-	 ++counter;
-      }
+      std::vector<MPI_Request> nbrRecvRequests;
+      std::vector<MPI_Request> nbrSendRequests;
+      startMetadataRepartitioning(nbrRecvRequests,importDisplacements,nbrSendRequests,exportDisplacements,newCellNeighbours);
       
-      // Create an MPI struct containing all data received from importing process it->first and post receives:
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
-	 const MPI_processID source = it->first;
-	 const int tag              = it->first;
-	 MPI_Type_create_struct(N_dataElements*it->second,blockLengths[counter],displacements[counter],datatypes[counter],&MPIdataType);
-	 MPI_Type_commit(&MPIdataType);
-	 MPI_Irecv(MPI_BOTTOM,1,MPIdataType,source,tag,comm,&(recvRequests[counter]));
-	 MPI_Type_free(&MPIdataType);
-	 ++counter;
+      // Set new host for all exported cells, it should not matter 
+      // if cells are exported from process A to process A here:
+      for (int c=0; c<N_export; ++c) {
+	 hosts[exportLocalIDs[c]] = exportProcesses[c];
       }
-      
-      // Deallocate arrays:
-      for (size_t i=0; i<importsPerProcess.size(); ++i) {
-	 delete [] datatypes[i]; datatypes[i] = NULL;
-	 delete [] blockLengths[i]; blockLengths[i] = NULL;
-	 delete [] displacements[i]; displacements[i] = NULL;
-      }
-      
-      // Allocate arrays containing MPI datatypes for exported cell data:
-      datatypes.resize(exportsPerProcess.size());
-      blockLengths.resize(exportsPerProcess.size());
-      displacements.resize(exportsPerProcess.size());
-      indices.resize(exportsPerProcess.size());
-      processIndices.clear();
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=exportsPerProcess.begin(); it!=exportsPerProcess.end(); ++it) {
-	 datatypes[counter]        = new MPI_Datatype[N_dataElements*it->second];
-	 blockLengths[counter]     = new int[N_dataElements*it->second];
-	 displacements[counter]    = new MPI_Aint[N_dataElements*it->second];
-	 processIndices[it->first] = counter;
-	 indices[counter] = 0;
-	 ++counter;
-      }
-      
-      // Fetch data to arrays desbribing exported cell data:
-      for (int i=0; i<N_export; ++i) {
-	 if (exportProcesses[i] == getRank()) continue;
-	 
-	 const bool sending = true;
-	 const int identifier = 0;
-	 const int dummyRecvCount = -1;
-	 const size_t procIndex = processIndices[exportProcesses[i]];
-	 const unsigned int arrayIndex = indices[procIndex];
-	 
-	 MPI_Aint address;
-	 MPI_Get_address(&(cellNeighbours[exportLocalIDs[i]*N_neighbours]),&address);
-	 blockLengths[procIndex][arrayIndex+0] = N_neighbours;
-	 displacements[procIndex][arrayIndex+0] = address;
-	 datatypes[procIndex][arrayIndex+0] = MPI_Type<CellID>();
-	 
-	 MPI_Get_address(&(cellNeighbourTypes[exportLocalIDs[i]*N_neighbours]),&address);
-	 blockLengths[procIndex][arrayIndex+1] = N_neighbours;
-	 displacements[procIndex][arrayIndex+1] = address;
-	 datatypes[procIndex][arrayIndex+1] = MPI_Type<NeighbourID>();
-	 
-	 cells[exportLocalIDs[i]].getData(sending,identifier,dummyRecvCount,dummyRecvCount,blockLengths[procIndex]+arrayIndex+2,displacements[procIndex]+arrayIndex+2,datatypes[procIndex]+arrayIndex+2);
-	 indices[procIndex] += N_dataElements;
-	 ++counter;
-      }
-      
-      // Create an MPI struct containing all data sent to export process it->first and post send:
-      counter = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=exportsPerProcess.begin(); it!=exportsPerProcess.end(); ++it) {
-	 const MPI_processID dest = it->first;
-	 const int tag            = myrank;
-	 MPI_Type_create_struct(N_dataElements*it->second,blockLengths[counter],displacements[counter],datatypes[counter],&MPIdataType);
-	 MPI_Type_commit(&MPIdataType);
-	 MPI_Isend(MPI_BOTTOM,1,MPIdataType,dest,tag,comm,&(sendRequests[counter]));
-	 MPI_Type_free(&MPIdataType);
-	 ++counter;
-      }
-      
-      // Deallocate arrays used for MPI datatypes in cell exports:
-      for (size_t i=0; i<exportsPerProcess.size(); ++i) {
-	 delete [] datatypes[i]; datatypes[i] = NULL;
-	 delete [] blockLengths[i]; blockLengths[i] = NULL;
-	 delete [] displacements[i]; displacements[i] = NULL;
-      }
-      #ifdef PROFILE
-         profile::stop();
-      #endif
       
       // Copy non-exported local cells to newCells:
       counter = 0;
       for (CellID c=0; c<N_localCells; ++c) {
 	 if (hosts[c] != getRank()) continue;
-	 newCells[counter] = cells[c];
 	 newGlobalIDs.push_back(globalIDs[c]);
 	 newHosts.push_back(getRank());
 	 newGlobal2LocalMap[globalIDs[c]] = counter;
 	 
-	 newCellNeighbours.insert(newCellNeighbours.end(),N_neighbours,invalid());
-	 newCellNeighbourTypes.insert(newCellNeighbourTypes.end(),N_neighbours,calcNeighbourTypeID(0,0,0));
 	 for (size_t n=0; n<N_neighbours; ++n) {
 	    newCellNeighbours[counter*N_neighbours+n] = cellNeighbours[c*N_neighbours+n];
-	    newCellNeighbourTypes[counter*N_neighbours+n] = cellNeighbourTypes[c*N_neighbours+n];
 	 }
 	 newNeighbourFlags[counter] = neighbourFlags[c];
-
 	 ++counter;
       }
 
+      #ifndef NDEBUG
+         if (counter*N_neighbours > newCellNeighbours.size()) {
+	    std::cerr << "(PARGRID) ERROR: newCellNeighbours array out of bounds!" << std::endl;
+	    exit(1);
+	 }
+      #endif
+      
       // Set host, global ID, and global2Local entries for imported cells:
       counter = 0;
       for (int i=0; i<N_import; ++i) {
@@ -1801,19 +588,11 @@ namespace pargrid {
 	 ++counter;
       }
 
-      #ifdef PROFILE
-         profile::start("MPI Waits",profMPI);
-      #endif
-      // Wait for cell data recvs & sends to complete:
-      MPI_Waitall(importsPerProcess.size(),&(recvRequests[0]),MPI_STATUSES_IGNORE);
-      MPI_Waitall(exportsPerProcess.size(),&(sendRequests[0]),MPI_STATUSES_IGNORE);
-      #ifdef PROFILE
-         profile::stop();
-      #endif
-      
       // ************************************************************ //
       // ***** INSERT REMOTE CELLS AND UPDATE REMOTE CELL HOSTS ***** //
       // ************************************************************ //
+
+      waitMetadataRepartitioning(nbrRecvRequests,nbrSendRequests);
       
       // Iterate over new cell list and replace neighbour GIDs with LIDs.
       // Also calculate neighbourFlags for all local cells:
@@ -1831,8 +610,7 @@ namespace pargrid {
 	       nbrLID = it->second;
 	    } else {
 	       // Insert remote cell to newCells:
-	       nbrLID = newCells.size();
-	       newCells.push_back(ParCell<C>());
+	       nbrLID = newHosts.size();
 	       newGlobalIDs.push_back(nbrGID);
 	       newGlobal2LocalMap[nbrGID] = nbrLID;
 	       newHosts.push_back(MPI_PROC_NULL);
@@ -1846,7 +624,7 @@ namespace pargrid {
 	    }
 
 	    newCellNeighbours[c*N_neighbours+n] = nbrLID;
-	    nbrFlag = (nbrFlag | (1 << newCellNeighbourTypes[c*N_neighbours+n]));
+	    nbrFlag = (nbrFlag | (1 << n));
 	 }
 	 newNeighbourFlags[c] = nbrFlag;
       }
@@ -1855,11 +633,14 @@ namespace pargrid {
       #ifdef PROFILE
          profile::start("static user data",profUserData);
       #endif
-      repartitionUserData(newCells.size(),newLocalsBegin,N_import,importProcesses,importsPerProcess,N_export,exportProcesses,exportLocalIDs,exportGlobalIDs);
+      repartitionUserDataStatic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importsPerProcess,
+				N_export,exportProcesses,exportLocalIDs);
       #ifdef PROFILE
          profile::stop();
       #endif
-
+      repartitionUserDataDynamic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importDisplacements,
+				 N_export,exportProcesses,exportLocalIDs,exportDisplacements);
+      
       // First host update pass:
       // Send list of exported cells and their new hosts to every remote process:
       int* neighbourChanges                      = new int[nbrProcesses.size()];              // Number of exports nbrs. process has
@@ -1869,9 +650,11 @@ namespace pargrid {
 	 neighbourMigratingCellIDs[i] = NULL;
 	 neighbourMigratingHosts[i]   = NULL;
       }
-      
+
       // Send the number of cells this process is exporting to all neighbouring process,
       // and receive the number of exported cells per neighbouring process:
+      if (recvRequests.size() < 2*nbrProcesses.size()) recvRequests.resize(2*nbrProcesses.size());
+      if (sendRequests.size() < 2*nbrProcesses.size()) sendRequests.resize(2*nbrProcesses.size());
       counter = 0;
       for (std::set<MPI_processID>::const_iterator it=nbrProcesses.begin(); it!=nbrProcesses.end(); ++it) {
 	 MPI_Irecv(&(neighbourChanges[counter]),1,MPI_INT,*it,   *it,comm,&(recvRequests[counter]));
@@ -1902,6 +685,13 @@ namespace pargrid {
 	 MPI_Isend(exportProcesses,N_export,MPI_Type<MPI_processID>() ,*it,myrank,comm,&(sendRequests[2*counter+1]));
 	 ++counter;
       }
+      #ifndef NDEBUG
+         if (2*counter > recvRequests.size() || 2*counter > sendRequests.size()) {
+	    std::cerr << "(PARGRID) ERROR: 2*counter " << 2*counter << " recvRequests.size() " << recvRequests.size();
+	    std::cerr << " sendRequests.size() " << sendRequests.size() << std::endl;
+	    exit(1);
+	 }
+      #endif
       
       #ifdef PROFILE
          profile::start("MPI Waits",profMPI);
@@ -1973,6 +763,9 @@ namespace pargrid {
 	 }
       }
       
+      if (recvRequests.size() < 2*importProcs.size()) recvRequests.resize(2*importProcs.size());
+      if (sendRequests.size() < 2*exportProcs.size()) sendRequests.resize(2*exportProcs.size());
+      
       // Recv hostUpdates list from each process in importProcs:
       counter = 0;
       size_t* incomingUpdates = new size_t[importProcs.size()];
@@ -2000,8 +793,6 @@ namespace pargrid {
       #endif
       
       // Allocate buffers for sending and receiving host updates:
-      if (sendRequests.size() < 2*exportProcs.size()) sendRequests.resize(2*exportProcs.size());
-      if (recvRequests.size() < 2*importProcs.size()) recvRequests.resize(2*importProcs.size());
       CellID** incomingCellIDs      = new CellID* [importProcs.size()];
       CellID** outgoingCellIDs      = new CellID* [exportProcs.size()];
       MPI_processID** incomingHosts = new MPI_processID* [importProcs.size()];
@@ -2095,13 +886,12 @@ namespace pargrid {
       zoltan->LB_Free_Part(&exportGlobalIDs,&exportLocalIDs,&exportProcesses,&exportParts);
 
       // Swap cell data arrays:
-      cells.swap(newCells);
       hosts.swap(newHosts);
       globalIDs.swap(newGlobalIDs);
       global2LocalMap.swap(newGlobal2LocalMap);
       N_localCells = N_newLocalCells;
+      N_totalCells = hosts.size();
       cellNeighbours.swap(newCellNeighbours);
-      cellNeighbourTypes.swap(newCellNeighbourTypes);
       neighbourFlags.swap(newNeighbourFlags);
       
       // Recalculate and/or invalidate all other internal data that depends on partitioning:
@@ -2174,6 +964,12 @@ namespace pargrid {
       std::map<CellID,int> tmpReferences;
       std::set<CellID> tmpRemoteCells;
       
+      if (N_totalCells != hosts.size() || N_totalCells != globalIDs.size()) {
+	 std::cerr << "N_totalCells has incorrect value " << N_totalCells << " should be ";
+	 std::cerr << hosts.size() << '\t' << globalIDs.size() << std::endl;
+	 success = false;
+      }
+      
       // Count neighbour references, and collect global IDs of remote neighbours,
       // Also check neighbourFlags for correctness:
       for (size_t cell=0; cell<N_localCells; ++cell) {
@@ -2200,14 +996,14 @@ namespace pargrid {
       // Assume that localCells is correct. Check that remoteCells is correct.
       for (std::set<CellID>::const_iterator it=tmpRemoteCells.begin(); it!=tmpRemoteCells.end(); ++it) {
 	 const CellID localID = *it;
-	 if (localID < N_localCells || localID >= cells.size()) {
+	 if (localID < N_localCells || localID >= N_totalCells) {
 	    std::cerr << "P#" << myrank << " remote cell LID#" << *it << " has invalid LID!" << std::endl;
 	    success = false;
 	 }
       }
 
       // Check that remoteCells does not contain unnecessary entries:
-      for (size_t i=N_localCells; i<cells.size(); ++i) {
+      for (size_t i=N_localCells; i<N_totalCells; ++i) {
 	 std::set<CellID>::const_iterator jt=tmpRemoteCells.find(i);
 	 if (jt == tmpRemoteCells.end()) {
 	    std::cerr << "P#" << myrank << " unnecessary remote cell entry in cells, LID#" << i << std::endl;
@@ -2217,7 +1013,7 @@ namespace pargrid {
       
       // Check that localCells and remoteCells do not contain duplicate cells:
       std::set<CellID> tmpGlobalIDs;
-      for (size_t i=0; i<cells.size(); ++i) {
+      for (size_t i=0; i<N_totalCells; ++i) {
 	 std::set<CellID>::const_iterator it = tmpGlobalIDs.find(globalIDs[i]);
 	 if (it != tmpGlobalIDs.end()) {
 	    std::cerr << "P#" << myrank << " LID#" << i << " GID#" << globalIDs[i] << " duplicate entry" << std::endl;
@@ -2227,7 +1023,7 @@ namespace pargrid {
       }
       
       // Check that all hosts are valid:
-      for (size_t i=0; i<cells.size(); ++i) {
+      for (size_t i=0; i<N_totalCells; ++i) {
 	 if (i < N_localCells) {
 	    // Check that all local cells have this process as their host:
 	    if (hosts[i] != getRank()) {
@@ -2332,12 +1128,20 @@ namespace pargrid {
       delete zoltan; zoltan = NULL;
       
       // Deallocate user data:
-      for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i] == NULL) continue;
-	 userData[i]->finalize();
-	 delete userData[i]; userData[i] = NULL;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second == NULL) continue;
+	 it->second->finalize();
+	 delete it->second; it->second = NULL;
       }
       
+      // Deallocate dynamic user data:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second == NULL) continue;
+	 it->second->finalize();
+	 delete it->second; it->second = NULL;
+      }
       return true;
    }
    
@@ -2348,7 +1152,7 @@ namespace pargrid {
     * @return Vector containing local IDs of exterior cells.*/
    template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getBoundaryCells(StencilID stencilID) const {
-      typename std::map<StencilID,Stencil<C> >::const_iterator it = stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator it = stencils.find(stencilID);
       #ifndef NDEBUG
          if (it == stencils.end()) {
 	    std::cerr << "(PARGRID) ERROR: Non-existing stencil " << stencilID << " requested in getBoundaryCells!" << std::endl;
@@ -2423,7 +1227,7 @@ namespace pargrid {
     * @return Vector containing local IDs of inner cells.*/
    template<class C> inline
    const std::vector<CellID>& ParGrid<C>::getInnerCells(StencilID stencilID) const {
-      typename std::map<StencilID,Stencil<C> >::const_iterator it = stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator it = stencils.find(stencilID);
       if (it == stencils.end()) {
 	 std::cerr << "(PARGRID) ERROR: Non-existing stencil " << stencilID << " requested in getInnerCells!" << std::endl;
 	 exit(1);
@@ -2440,7 +1244,7 @@ namespace pargrid {
 	 const unsigned int ALL_EXIST = 134217728 - 1; // This value is 2^27 - 1, i.e. integer with first 27 bits flipped
 	 interiorCells.clear();
 	 for (size_t i=0; i<N_localCells; ++i) {
-	    if (cells[i].neighbourFlags == ALL_EXIST) interiorCells.push_back(i);
+	    if (neighbourFlags[i] == ALL_EXIST) interiorCells.push_back(i);
 	 }
 	 recalculateInteriorCells = false;
       }
@@ -2493,7 +1297,7 @@ namespace pargrid {
    /** Get the total number of cells on this process. This includes remote cells buffered on this process.
     * @return Total number of cells hosted and buffered on this process.*/
    template<class C> inline
-   CellID ParGrid<C>::getNumberOfAllCells() const {return cells.size();}
+   CellID ParGrid<C>::getNumberOfAllCells() const {return N_totalCells;}
    
    /** Get the number of cells on this process.
     * @return Number of local cells.*/
@@ -2526,10 +1330,10 @@ namespace pargrid {
       // Iterate over given neighbour type IDs and check if this cell has 
       // those neighbours, and if those neighbours are remote:
       for (size_t n=0; n<nbrTypeIDs.size(); ++n) {
-	 const NeighbourID nbrType = nbrTypeIDs[n];
-	 if (cells[localID].neighbours[nbrType] == invalid()) continue;
-	 if (hosts[cells[localID].neighbours[nbrType]] == getRank()) continue;
-	 nbrIDs.push_back(cells[localID].neighbours[nbrType]);
+	 const CellID nbrLID = cellNeighbours[localID*N_neighbours + n];
+	 if (cellNeighbours[nbrLID] == INVALID_CELLID) continue;
+	 if (hosts[nbrLID] == getRank()) continue;
+	 nbrIDs.push_back(nbrLID);
       }	 
       return true;
    }
@@ -2546,10 +1350,9 @@ namespace pargrid {
       buffer = NULL;
       #ifndef NDEBUG
          if (initialized == false) return false;
-         if (userDataID >= userData.size()) return false;
-         if (userData[userDataID] == NULL) return false;
+         if (userDataStatic.find(userDataID) == userDataStatic.end()) return false;
       #endif
-      typename std::map<StencilID,Stencil<C> >::const_iterator it=stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator it=stencils.find(stencilID);
       if (it == stencils.end()) return false;
       return it->second.getRemoteUpdates(userDataID,offsets,buffer);
    }
@@ -2560,9 +1363,10 @@ namespace pargrid {
     * @see addUserData.*/
    template<class C> inline
    char* ParGrid<C>::getUserData(DataID userDataID) {
-      if (userDataID >= userData.size()) return NULL;
-      if (userData[userDataID] == NULL) return NULL;
-      return userData[userDataID]->array;
+      #ifndef NDEBUG
+         if (userDataStatic.find(userDataID) == userDataStatic.end()) return NULL;
+      #endif
+      return userDataStatic[userDataID]->array;
    }
    
    /** Get pointer to user-defined data array.
@@ -2571,11 +1375,50 @@ namespace pargrid {
     * @see addUserData.*/
    template<class C> inline
    char* ParGrid<C>::getUserData(const std::string& name) {
-      for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i] == NULL) continue;
-	 if (userData[i]->name == name) return userData[i]->array;
-      }
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second->getName() == name) return it->second->array;
+      }      
       return NULL;
+   }
+   
+   /** Get user array containing dynamically allocated data.
+    * @param userDataID Data ID of the array.
+    * @return Wrapper to array.*/
+   template<class C> template<typename T> inline
+   DataWrapper<T> ParGrid<C>::getUserDataDynamic(DataID userDataID) {
+      typename std::map<DataID,UserDataDynamic<ParGrid>*>::iterator it = userDataDynamic.find(userDataID);
+      
+      // If dynamic data array with given ID does not exist,
+      // return an invalid DataWrapper:
+      if (it == userDataDynamic.end()) {
+	 return DataWrapper<T>(NULL,NULL,0,NULL);
+      }
+      
+      // Return DataWrapper associated with requested dynamic data array:
+      return DataWrapper<T>(it->second->getArrayPointer(),
+			    it->second->getCapacityPointer(),
+			    it->second->getNumberOfCells(),
+			    it->second->getSizePointer());
+   }
+   
+   /** Get user array containing dynamically allocated data.
+    * @param name Name of the array.
+    * @return Wrapper to array.*/
+   template<class C> template<typename T> inline
+   DataWrapper<T> ParGrid<C>::getUserDataDynamic(const std::string& name) {
+      // Iterate over all dynamic user data and search for the given name:
+      typename std::map<DataID,UserDataDynamic<ParGrid>*>::iterator it;
+      for (it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second->getName() == name) {
+	    return DataWrapper<T>(it->second->getArrayPointer(),
+				  it->second->getCapacityPointer(),
+				  it->second->getNumberOfCells(),
+				  it->second->getSizePointer());
+	 }
+      }
+      // Dynamic user data with given name was not found:
+      return DataWrapper<T>(NULL,NULL,0,NULL);
    }
    
    /** Get all valid user data ID numbers.
@@ -2583,9 +1426,13 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getUserDataIDs(std::vector<DataID>& userDataIDs) const {
       userDataIDs.clear();
-      for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i] == NULL) continue;
-	 userDataIDs.push_back(i);
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 userDataIDs.push_back(it->first);
+      }
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 userDataIDs.push_back(it->first);
       }
    }
    
@@ -2594,10 +1441,13 @@ namespace pargrid {
     * @param userDataID ID number of the user data array.
     * @return Zero if an array with given ID number does not exist, otherwise byte size of array element.*/
    template<class C> inline
-   unsigned int ParGrid<C>::getUserDataElementSize(DataID userDataID) const { 
-      if (userDataID >= userData.size()) return 0;
-      if (userData[userDataID] == NULL) return 0;
-      return userData[userDataID]->getElementSize();
+   unsigned int ParGrid<C>::getUserDataElementSize(DataID userDataID) const {
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator 
+	it=userDataStatic.find(userDataID);
+      #ifndef NDEBUG
+         if (it == userDataStatic.end()) return 0;
+      #endif
+      return it->second->getElementSize();
    }
    
    /** Get information on given user-defined data array.
@@ -2609,12 +1459,14 @@ namespace pargrid {
     * @return If true, user array with given ID exists and output variables contain valid values.*/
    template<class C> inline
    bool ParGrid<C>::getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const {
-      if (userDataID >= userData.size()) return false;
-      if (userData[userDataID] == NULL) return false;
-      name = userData[userDataID]->name;
-      byteSize = userData[userDataID]->byteSize;
-      N_elements = userData[userDataID]->N_elements;
-      ptr = userData[userDataID]->array;
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator it = userDataStatic.find(userDataID);
+      #ifndef NDEBUG
+         if (it == userDataStatic.end()) return false;
+      #endif
+      name       = it->second->name;
+      byteSize   = it->second->byteSize;
+      N_elements = it->second->N_elements;
+      ptr        = it->second->array;
       return true;
    }
    
@@ -2627,9 +1479,11 @@ namespace pargrid {
     * @return If true, user array with given ID number exists and an MPI datatype was created successfully.*/
    template<class C> inline
    bool ParGrid<C>::getUserDatatype(DataID userDataID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil) {
-      if (userDataID >= userData.size()) return false;
-      if (userData[userDataID] == NULL) return false;
-      userData[userDataID]->getDatatype(globalIDs,datatype);
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator it = userDataStatic.find(userDataID);
+      #ifndef NDEBUG
+         if (it == userDataStatic.end()) return false;
+      #endif
+      it->second->getDatatype(globalIDs,datatype);
       return true;
    }
    
@@ -2759,20 +1613,17 @@ namespace pargrid {
       }
 
       // Register Zoltan callback functions:
-      zoltan->Set_Num_Obj_Fn(&cb_getNumberOfLocalCells<C>,this);
-      zoltan->Set_Obj_List_Fn(&cb_getLocalCellList<C>,this);
-      zoltan->Set_Num_Geom_Fn(&cb_getMeshDimension<C>,this);          // Geometrical
-      //zoltan->Set_Geom_Fn(&cb_getCellCoordinates,this);
-      zoltan->Set_Geom_Multi_Fn(&cb_getAllCellCoordinates<C>,this);
-      //zoltan->Set_Num_Edges_Fn(&cb_getNumberOfEdges<C>,this);         // Graph
-      zoltan->Set_Num_Edges_Multi_Fn(&cb_getNumberOfAllEdges<C>,this);
-      //zoltan->Set_Edge_List_Fn(&cb_getCellEdges<C>,this);
-      zoltan->Set_Edge_List_Multi_Fn(&cb_getAllCellEdges<C>,this);
-      zoltan->Set_HG_Size_CS_Fn(&cb_getNumberOfHyperedges<C>,this);                // Hypergraph
-      zoltan->Set_HG_CS_Fn(&cb_getHyperedges<C>,this);
-      zoltan->Set_HG_Size_Edge_Wts_Fn(cb_getNumberOfHyperedgeWeights<C>,this);
-      zoltan->Set_HG_Edge_Wts_Fn(cb_getHyperedgeWeights<C>,this);
-      //zoltan->Set_Hier_Num_Levels_Fn(cb_getNumberOfHierarchicalLevels<C>,this);   // Hierarchical
+      zoltan->Set_Num_Obj_Fn(&cb_getNumberOfLocalCells<ParGrid<C> >,this);               // All methods
+      zoltan->Set_Obj_List_Fn(&cb_getLocalCellList<ParGrid<C> >,this);
+      zoltan->Set_Num_Geom_Fn(&cb_getMeshDimension<ParGrid<C> >,this);                   // Geometrical
+      zoltan->Set_Geom_Multi_Fn(&cb_getAllCellCoordinates<ParGrid<C> >,this);
+      zoltan->Set_Num_Edges_Multi_Fn(&cb_getNumberOfAllEdges<ParGrid<C> >,this);         // Graph
+      zoltan->Set_Edge_List_Multi_Fn(&cb_getAllCellEdges<ParGrid<C> >,this);
+      zoltan->Set_HG_Size_CS_Fn(&cb_getNumberOfHyperedges<ParGrid<C> >,this);            // Hypergraph
+      zoltan->Set_HG_CS_Fn(&cb_getHyperedges<ParGrid<C> >,this);
+      zoltan->Set_HG_Size_Edge_Wts_Fn(cb_getNumberOfHyperedgeWeights<ParGrid<C> >,this);
+      zoltan->Set_HG_Edge_Wts_Fn(cb_getHyperedgeWeights<ParGrid<C> >,this);
+      //zoltan->Set_Hier_Num_Levels_Fn(cb_getNumberOfHierarchicalLevels<C>,this);        // Hierarchical
       //zoltan->Set_Hier_Part_Fn(cb_getHierarchicalPartNumber<C>,this);
       //zoltan->Set_Hier_Method_Fn(&cb_getHierarchicalParameters<C>,this);
 
@@ -2800,18 +1651,13 @@ namespace pargrid {
     * @return Invalid stencil ID.*/
    template<class C> inline
    StencilID ParGrid<C>::invalidStencilID() const {return std::numeric_limits<StencilID>::max();}
-   
-   /** Return an invalid transfer ID.
-    * @return Invalid transfer ID.*/
-   template<class C> inline
-   TransferID ParGrid<C>::invalidTransferID() const {return -1;}
 
    /** Invalidate ParGrid internal variables. This function gets called after mesh has been repartitioned.*/
    template<class C> inline
    void ParGrid<C>::invalidate() {
       recalculateInteriorCells = true;
       recalculateExteriorCells = true;
-      for (typename std::map<StencilID,Stencil<C> >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
+      for (typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
 	 it->second.update();
       }
       
@@ -2834,31 +1680,17 @@ namespace pargrid {
       if (localID >= N_localCells) return false;
       return true;
    }
-   
-   /** Get a pointer to user-data of the given cell.
-    * @param localID Local ID of the cell that holds the requested user data.
-    * @return Pointer to user data, or NULL if a cell with the given global ID does not exist.*/
-   template<class C> inline
-   C* ParGrid<C>::operator[](const CellID& localID) {
-      #ifndef NDEBUG
-         if (localID >= cells.size()) {
-	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " LID#" << localID << " too large in operator[] !" << std::endl;
-	    return NULL;
-	 }
-      #endif
-      return &(cells[localID].userData);
-   }
 
    /** Remove a data transfer that has been previously associated with the given Stencil.
+    * @param userDataID ID of the user data array.
     * @param stencilID ID of the Stencil.
-    * @param transferID ID of the transfer.
     * @return If true, the transfer was removed successfully.*/
    template<class C> inline
-   bool ParGrid<C>::removeDataTransfer(StencilID stencilID,TransferID transferID) {
+   bool ParGrid<C>::removeDataTransfer(DataID userDataID,StencilID stencilID) {
       if (getInitialized() == false) return false;
-      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator it = stencils.find(stencilID);
       if (it == stencils.end()) return false;
-      return it->second.removeTransfer(transferID);
+      return it->second.removeTransfer(userDataID);
    }
    
    /** Remove a transfer stencil from ParGrid.
@@ -2867,7 +1699,7 @@ namespace pargrid {
    template<class C> inline
    bool ParGrid<C>::removeStencil(StencilID stencilID) {
       if (stencilID == pargrid::DEFAULT_STENCIL) return false;
-      typename std::map<StencilID,Stencil<C> >::iterator it = stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator it = stencils.find(stencilID);
       if (it == stencils.end()) return false;
       stencils.erase(it);
       return true;
@@ -2879,21 +1711,34 @@ namespace pargrid {
     * @see addUserData.*/
    template<class C> inline
    bool ParGrid<C>::removeUserData(DataID userDataID) {
-      if (userDataID >= userData.size()) return false;
-      if (userDataHoles.find(userDataID) != userDataHoles.end()) return false;
-      
-      // Remove transfers associated with this user data array. Note that 
-      // we do not know transferID(s) associated with this userDataID:
-      for (typename std::map<StencilID,Stencil<C> >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
-	 it->second.removeUserDataTransfers(userDataID);
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator user=userDataStatic.find(userDataID);
+      if (user != userDataStatic.end()) {
+	 // Remove transfers associated with this user data array. Note that 
+	 // we do not know transferID(s) associated with this userDataID:
+	 for (typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator it=stencils.begin(); it!=stencils.end(); ++it) {
+	    it->second.removeTransfer(userDataID);
+	 }
+	 
+	 userDataHoles.insert(userDataID);
+	 delete user->second; user->second = NULL;
+	 userDataStatic.erase(userDataID);
+	 return true;
       }
       
-      userDataHoles.insert(userDataID);
-      userData[userDataID]->finalize();
-      delete userData[userDataID]; userData[userDataID] = NULL;
-      return true;
+      typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator userDyn=userDataDynamic.find(userDataID);
+      if (userDyn != userDataDynamic.end()) {
+	 // Remove transfers associated with this dynamic user data array:
+	 // TODO
+	 
+	 // Delete dynamic user data array:
+	 userDataHoles.insert(userDataID);
+	 delete userDyn->second; userDyn->second = NULL;
+	 userDataDynamic.erase(userDataID);
+	 return true;
+      }
+      return false;
    }
-
+   
    /** Repartition user-defined data arrays. This function is called by balanceLoad.
     * @param N_cells Number of needed parallel cells in new mesh partitioning.
     * @param newLocalsBegin Index into arrays from which new (imported) cell data begin.
@@ -2906,10 +1751,10 @@ namespace pargrid {
     * @param exportGlobalIDs Global ID of exported cell i.
     * @return If true, user data was repartitioned successfully.*/
    template<class C> inline
-   bool ParGrid<C>::repartitionUserData(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
-					const std::map<MPI_processID,unsigned int>& importsPerProcess,
-					int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,ZOLTAN_ID_PTR exportGlobalIDs) {
-      // Create a list of exported cells' (globalID,localID) pairs to each export process:
+   bool ParGrid<C>::repartitionUserDataStatic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
+					      const std::map<MPI_processID,unsigned int>& importsPerProcess,
+					      int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs) {
+      // Create a list of exported cells' (globalID,localID) pairs for each export process:
       std::map<MPI_processID,std::vector<CellID> > transfers;
       for (int i=0; i<N_export; ++i) {
 	 if (exportProcesses[i] == getRank()) continue;
@@ -2917,9 +1762,9 @@ namespace pargrid {
       }
       
       // Allocate N_userData MPI_Datatypes for each export process, where 
-      // N_userData is the number of currently allocated user data arrays:
+      // N_userData is the number of currently allocated static user data arrays:
       size_t counter = 0;
-      const int N_userData = std::max((size_t)0,userData.size()-userDataHoles.size());
+      const size_t N_userData = userDataStatic.size();
       std::vector<std::vector<MPI_Datatype> > userDatatypes;
       for (std::map<MPI_processID,std::vector<CellID> >::const_iterator it=transfers.begin(); it!=transfers.end(); ++it) {
 	 if (it->first == getRank()) continue;
@@ -2928,13 +1773,19 @@ namespace pargrid {
             
       // Allocate a temporary container for new user data. Each array is 
       // initialized to correct size, N_cells = local + remote cells:
-      std::vector<UserDataWrapper<C>*> newUserData(userData.size());
-      for (size_t i=0; i<userData.size(); ++i) {
-	 if (userData[i] == NULL) {newUserData[i] = NULL; continue;}
-	 newUserData[i] = new UserDataWrapper<C>();
-	 newUserData[i]->initialize(this,userData[i]->name,N_cells,userData[i]->N_elements,userData[i]->byteSize);
+      std::map<DataID,UserDataStatic<ParGrid<C> >*> newUserData;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 #ifndef NDEBUG
+	    if (it->second == NULL) {
+	       std::cerr << "(PARGRID) ERROR: userDataStatic #" << it->first << " is NULL in repartitionUserData!" << std::endl;
+	       exit(1);
+	    }
+	 #endif
+	 newUserData[it->first] = new UserDataStatic<ParGrid<C> >();
+	 newUserData[it->first]->initialize(this,it->second->name,N_cells,it->second->N_elements,it->second->byteSize);
       }
-
+      
       // Allocate enough send and recv requests:
       int N_importProcesses = 0;
       for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
@@ -2947,12 +1798,12 @@ namespace pargrid {
       // Receive user-defined data from import processes:
       counter = 0;
       size_t requestCounter = 0;
-      for (size_t data=0; data<newUserData.size(); ++data) {
-	 if (newUserData[data] == NULL) continue;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
+	   user=newUserData.begin(); user!=newUserData.end(); ++user) {
 	 std::map<MPI_processID,MPI_Datatype> importDatatypes;
 
 	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = newUserData[data]->N_elements*newUserData[data]->byteSize;
+	 const int byteSize = user->second->N_elements * user->second->byteSize;
 	 MPI_Datatype basicDatatype;
 	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
 	 MPI_Type_commit(&basicDatatype);
@@ -2977,7 +1828,7 @@ namespace pargrid {
 	 for (std::map<MPI_processID,MPI_Datatype>::iterator it=importDatatypes.begin(); it!=importDatatypes.end(); ++it) {
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
-	    void* buffer               = newUserData[data]->array;
+	    void* buffer               = user->second->array;
 	    MPI_Irecv(buffer,1,it->second,source,tag,comm,&(recvRequests[requestCounter]));
 	    ++requestCounter;
 	 }
@@ -2992,12 +1843,12 @@ namespace pargrid {
       
       // Send user-defined data to export processes:
       requestCounter = 0;
-      for (size_t data=0; data<userData.size(); ++data) {
-	 if (userData[data] == NULL) continue;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
+	   user=userDataStatic.begin(); user!=userDataStatic.end(); ++user) {
 	 std::map<MPI_processID,std::vector<int> > displacements;
 	 
 	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = userData[data]->N_elements*userData[data]->byteSize;
+	 const int byteSize = user->second->N_elements * user->second->byteSize;
 	 MPI_Datatype basicDatatype;
 	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
 	 MPI_Type_commit(&basicDatatype);
@@ -3007,8 +1858,8 @@ namespace pargrid {
 	    for (size_t j=0; j<it->second.size(); ++j) {
 	       displacements[it->first].push_back(it->second[j]);
 	    }
-	    
-	    void* buffer       = userData[data]->array;
+
+	    void* buffer       = user->second->array;
 	    MPI_processID dest = it->first;
 	    const int tag      = getRank();
 	    
@@ -3025,12 +1876,14 @@ namespace pargrid {
       }
       
       // Copy data remaining on this process to newUserData:
-      for (size_t data=0; data<userData.size(); ++data) {
-	 if (userData[data] == NULL) continue;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   oldUser=userDataStatic.begin(); oldUser!=userDataStatic.end(); ++oldUser) {
+	 typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator 
+	   newUser=newUserData.find(oldUser->first);
 	 counter = 0;
 	 for (CellID cell=0; cell<N_localCells; ++cell) {
 	    if (hosts[cell] != getRank()) continue;
-	    newUserData[data]->copy(*userData[data],counter,cell);
+	    newUser->second->copy(*(oldUser->second),counter,cell);
 	    ++counter;
 	 }
       }
@@ -3040,16 +1893,329 @@ namespace pargrid {
       MPI_Waitall(sendRequests.size(),&(sendRequests[0]),MPI_STATUSES_IGNORE);
 
       // Swap newUserData and userData:
-      userData.swap(newUserData);
+      userDataStatic.swap(newUserData); // FIXME
       
       // Deallocate old user data:
-      for (size_t i=0; i<newUserData.size(); ++i) {
-	 if (newUserData[i] == NULL) continue;
-	 newUserData[i]->finalize();
-	 delete newUserData[i]; newUserData[i] = NULL;
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
+	   user=newUserData.begin(); user!=newUserData.end(); ++user) {
+	 user->second->finalize();
+	 delete user->second; user->second = NULL;
+      }
+      return true;
+   }
+
+   template<class C> inline
+   bool ParGrid<C>::repartitionUserDataDynamic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
+					       std::map<MPI_processID,std::vector<int> >& importDisplacements,int N_export,
+					       int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+					       std::map<MPI_processID,std::vector<int> >& exportDisplacements) {
+      bool success = true;
+      #ifdef PROFILE
+         profile::start("dynamic user data",profDynamicData);
+      #endif
+      
+      // Allocate memory for new dynamic data arrays. Later on these will 
+      // be swapped with map userDataDynamic:
+      std::map<DataID,UserDataDynamic<ParGrid<C> >*> newUserData;
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 #ifndef NDEBUG
+	    if (it->second == NULL) {
+	       std::cerr << "(PARGRID) ERROR: userDataDynamic #" << it->first << " is NULL in repartitionUserDataDynamic!" << std::endl;
+	       exit(1);
+	    }
+         #endif
+	 newUserData[it->first] = new UserDataDynamic<ParGrid<C> >();
+	 newUserData[it->first]->initialize(this,it->second->getName(),N_cells,it->second->getElementByteSize());
       }
       
-      return true;
+      // ************************************************************* //
+      // ***** EXCHANGE THE AMOUNT OF IMPORTED AND EXPORTED DATA ***** //
+      // *****         WITH IMPORT AND EXPORT PROCESSES          ***** //
+      // ************************************************************* //
+      
+      // Create derived MPI datatypes for sending UserDataDynamic::sizes array(s):
+      std::vector<MPI_Datatype> exportDatatypes(exportDisplacements.size());
+      size_t counter = 0;
+      for (std::map<MPI_processID,std::vector<int> >::iterator
+	   it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),MPI_Type<ArraySizetype>(),&(exportDatatypes[counter]));
+	 MPI_Type_commit(&(exportDatatypes[counter]));
+	 ++counter;
+      }
+      
+      // Create derived MPI datatypes for receiving UserDataDynamic::sizes array(s):
+      std::vector<MPI_Datatype> importDatatypes(importDisplacements.size());
+      counter = 0;
+      for (std::map<MPI_processID,std::vector<int> >::iterator 
+	   it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),MPI_Type<ArraySizetype>(),&(importDatatypes[counter]));
+	 MPI_Type_commit(&(importDatatypes[counter]));
+	 ++counter;
+      }
+      
+      // Allocate enough MPI_Requests:
+      if (recvRequests.size() < importDisplacements.size() * newUserData.size())
+	recvRequests.resize(importDisplacements.size() * newUserData.size());
+      if (sendRequests.size() < exportDisplacements.size() * newUserData.size())
+	sendRequests.resize(exportDisplacements.size() * newUserData.size());
+      
+      // Receive UserDataDynamic::sizes array entries from each import process:
+      size_t recvRequestCounter = 0;
+      size_t sendRequestCounter = 0;
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   userNew=newUserData.begin(); userNew!=newUserData.end(); ++userNew) {
+	 
+	 // Post one receive per import process:
+	 counter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::iterator 
+	      it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	    const MPI_processID source = it->first;
+	    const int tag              = it->first;
+	    void* buffer               = userNew->second->getSizePointer();
+	    MPI_Irecv(buffer,1,importDatatypes[counter],source,tag,comm,&(recvRequests[recvRequestCounter]));
+	    ++counter;
+	    ++recvRequestCounter;
+	 }
+      }
+      
+      #ifndef NDEBUG
+         if (recvRequestCounter > recvRequests.size()) {
+	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " recvRequests.size() " << recvRequests.size();
+	    std::cerr << " recvRequestCounter " << recvRequestCounter << std::endl;
+	    exit(1);
+	 }
+      #endif
+
+      // Send UserDataDynamic::sizes array entries to each export process:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   userOld=userDataDynamic.begin(); userOld!=userDataDynamic.end(); ++userOld) {
+
+	 // Post one send per export process:
+	 counter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::iterator
+	      it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	    const MPI_processID source = it->first;
+	    const int tag              = getRank();
+	    void* buffer               = userOld->second->getSizePointer();
+	    MPI_Isend(buffer,1,exportDatatypes[counter],source,tag,comm,&(sendRequests[sendRequestCounter]));
+	    ++counter;
+	    ++sendRequestCounter;
+	 }
+      }
+      
+       #ifndef NDEBUG
+         if (sendRequestCounter > sendRequests.size()) {
+	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " sendRequests.size() " << sendRequests.size();
+	    std::cerr << " sendRequestCounter " << sendRequestCounter << std::endl;
+	    exit(1);
+	 }
+      #endif
+      
+      // Free datatypes and deallocate datatype arrays:
+      for (size_t i=0; i<exportDatatypes.size(); ++i) MPI_Type_free(&(exportDatatypes[i]));
+      for (size_t i=0; i<importDatatypes.size(); ++i) MPI_Type_free(&(importDatatypes[i]));
+      exportDatatypes.clear();
+      importDatatypes.clear();
+      
+      // Copy sizes entries of cells remaining on this process:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
+	   userOld=userDataDynamic.begin(); userOld!=userDataDynamic.end(); ++userOld) {
+	 // Find the corresponding new user data array:
+	 typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator 
+	   userNew = newUserData.find(userOld->first);
+	 
+	 #ifndef NDEBUG
+	    if (userNew == newUserData.end()) {
+	       std::cerr << "(PARGRID) ERROR: Invalid iterator in repartitionUserDataDynamic!" << std::endl;
+	       exit(1);
+	    }
+	 #endif
+	 
+	 // Get pointers to sizes arrays:
+	 const ArraySizetype* oldSizes = userOld->second->getSizePointer();
+	 ArraySizetype* newSizes       = userNew->second->getSizePointer();
+	 
+	 counter = 0;
+	 for (CellID cell=0; cell<N_localCells; ++cell) {
+	    if (hosts[cell] != getRank()) continue;
+	    newSizes[counter] = oldSizes[cell];
+	    ++counter;
+	 }
+      }
+      
+      // Wait:
+      #ifdef PROFILE
+         profile::start("MPI waits",profDynamicDataMPI);
+      #endif
+      MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+      MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
+      #ifdef PROFILE
+         profile::stop();
+      #endif
+      
+      // **************************************************** //
+      // ***** EXCHANGE DYNAMICALLY ALLOCATED DATA WITH ***** //
+      // *****       IMPORT AND EXPORT PROCESSES        ***** //
+      // **************************************************** //
+      
+      // Allocate memory for new dynamic data arrays:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   it=newUserData.begin(); it!=newUserData.end(); ++it) {
+	 #ifndef NDEBUG
+	    if (it->second == NULL) {
+	       std::cerr << "(PARGRID) ERROR: newUserData[" << it->first << "] is NULL!" << std::endl;
+	       exit(1);
+	    }
+	 #endif
+	 it->second->reallocate(0,N_cells);
+      }
+
+      recvRequestCounter = 0;
+      sendRequestCounter = 0;
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   userNew=newUserData.begin(); userNew!=newUserData.end(); ++userNew) {
+	 
+	 // Create an MPI datatype for receiving one array element:
+	 MPI_Datatype datatype;
+	 MPI_Datatype basicDatatype;
+	 MPI_Type_contiguous(userNew->second->getElementByteSize(),MPI_Type<char>(),&basicDatatype);
+	 
+	 // Get pointers to arrays where data is received and amount of 
+	 // data to receive per cell (in elementByteSize):
+	 char** newArrays        = userNew->second->getArrayPointer();
+	 ArraySizetype* newSizes = userNew->second->getSizePointer();
+
+	 // Displacements cannot be calculated as integer offsets any longer,
+	 // we have to use memory address offsets relative to MPI_BOTTOM here.
+	 // Blocklengths are not equal to unity either.
+	 counter = newLocalsBegin;
+	 MPI_Aint address;
+	 std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > > imports;
+	 for (int i=0; i<N_import; ++i) {
+	    if (importProcesses[i] == getRank()) continue;
+
+	    void* ptr = newArrays[counter];
+	    if (ptr == NULL) address = 0;
+	    else MPI_Get_address(newArrays[counter],&address);
+
+	    imports[importProcesses[i]].first.push_back(address);
+	    imports[importProcesses[i]].second.push_back(newSizes[counter]);
+	    ++counter;
+	 }
+
+	 // Post receives for imported data:
+	 for (std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > >::iterator
+	      it=imports.begin(); it!=imports.end(); ++it) {
+	    const int amount           = it->second.first.size();
+	    int* blocklengths          = &(it->second.second[0]);
+	    MPI_Aint* displacements    = &(it->second.first[0]);
+	    const MPI_processID source = it->first;
+	    const int tag              = it->first;
+	    MPI_Type_hindexed(amount,blocklengths,displacements,basicDatatype,&datatype);
+	    MPI_Type_commit(&datatype);
+	    MPI_Irecv(MPI_BOTTOM,1,datatype,source,tag,comm,&(recvRequests[recvRequestCounter]));
+	    MPI_Type_free(&datatype);
+	    ++recvRequestCounter;
+	 }
+	 
+	 // Get iterator to corresponding old user data array:
+	 typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator 
+	   userOld = userDataDynamic.find(userNew->first);
+
+	 #ifndef NDEBUG
+	    if (userOld->second == NULL) {
+	       std::cerr << "(PARGRID) ERROR: userOld[" << userOld->first << "] is NULL!" << std::endl;
+	       exit(1);
+	    }
+	 #endif
+	 
+	 // Get pointers to arrays containing exported data and
+	 // amount of data to export per cell (in elementByteSize):
+	 char** oldArrays        = userOld->second->getArrayPointer();
+	 ArraySizetype* oldSizes = userOld->second->getSizePointer();
+	 
+	 #ifndef NDEBUG
+	    if (oldArrays == NULL || oldSizes == NULL) {
+	       std::cerr << "(PARGRID) ERROR: Either oldArrays " << oldArrays << " or oldSizes " << oldSizes << " is NULL!" << std::endl;
+	       exit(1);
+	    }
+	 #endif
+	 
+	 std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > > exports;
+	 for (int i=0; i<N_export; ++i) {
+	    if (exportProcesses[i] == getRank()) continue;
+	    const ZOLTAN_ID_TYPE exportLocalID = exportLocalIDs[i];
+	    
+	    void* ptr = oldArrays[exportLocalID];
+	    if (ptr == NULL) address = 0;
+	    else MPI_Get_address(oldArrays[exportLocalID],&address);
+
+	    exports[exportProcesses[i]].first.push_back(address);
+	    exports[exportProcesses[i]].second.push_back(oldSizes[exportLocalID]);
+	 }
+
+	 // Post sends for exported data:
+	 for (std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > >::iterator
+	      it=exports.begin(); it!=exports.end(); ++it) {
+	    const int amount           = it->second.first.size();
+	    int* blocklengths          = &(it->second.second[0]);
+	    MPI_Aint* displacements    = &(it->second.first[0]);
+	    const MPI_processID dest   = it->first;
+	    const int tag              = getRank();
+	    MPI_Type_hindexed(amount,blocklengths,displacements,basicDatatype,&datatype);
+	    MPI_Type_commit(&datatype);
+	    MPI_Isend(MPI_BOTTOM,1,datatype,dest,tag,comm,&(sendRequests[sendRequestCounter]));
+	    MPI_Type_free(&datatype);
+	    ++sendRequestCounter;
+	 }
+	 
+	 // Copy data remaining on this process:
+	 const ArraySizetype elementByteSize = userOld->second->getElementByteSize();
+	 counter = 0;
+	 for (CellID cell=0; cell<N_localCells; ++cell) {
+	    if (hosts[cell] != getRank()) continue;
+	    for (size_t i=0; i<oldSizes[cell]*elementByteSize; ++i)
+	      newArrays[counter][i] = oldArrays[cell][i];
+	    ++counter;
+	 }
+      }
+      
+      #ifndef NDEBUG
+         if (recvRequestCounter > recvRequests.size()) {
+	    std::cerr << "(PARGRID) ERROR: recvRequestCounter " << recvRequestCounter << " recvRequests.size() " << recvRequests.size() << std::endl;
+	    exit(1);
+	 }
+         if (sendRequestCounter > sendRequests.size()) {
+	    std::cerr << "(PARGRID) ERROR: sendRequestCounter " << sendRequestCounter << " sendRequests.size() " << sendRequests.size() << std::endl;
+	    exit(1);
+	 }
+      #endif
+      
+      // Wait:
+      #ifdef PROFILE
+         profile::start("MPI waits",profDynamicDataMPI);
+      #endif
+      MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+      MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
+      #ifdef PROFILE
+         profile::stop();
+      #endif
+      
+      // Swap old and new user data:
+      userDataDynamic.swap(newUserData);
+      
+      // Deallocate old user data:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
+	   it=newUserData.begin(); it!=newUserData.end(); ++it) {
+	 it->second->finalize();
+	 delete it->second; it->second = NULL;
+      }
+
+      #ifdef PROFILE
+         profile::stop();
+      #endif
+      return success;
    }
 
    /** Set partitioning mode. This only has effect if GRAPH or HYPERGRAPH 
@@ -3078,16 +2244,68 @@ namespace pargrid {
       return rvalue;
    }
    
+   template<class C> inline
+   void ParGrid<C>::startMetadataRepartitioning(std::vector<MPI_Request>& nbrRecvRequests,
+						std::map<MPI_processID,std::vector<int> >& importDisplacements,
+						std::vector<MPI_Request>& nbrSendRequests,
+						std::map<MPI_processID,std::vector<int> >& exportDisplacements,
+						std::vector<CellID>& newCellNeighbours) {
+      // Create an MPI datatype for transferring all neighbour IDs of a single cell:
+      MPI_Datatype basicDatatype;
+      MPI_Datatype datatype;
+      MPI_Type_contiguous(N_neighbours,MPI_Type<CellID>(),&basicDatatype);
+      MPI_Type_commit(&basicDatatype);
+
+      // Allocate enough MPI requests:
+      nbrRecvRequests.resize(importDisplacements.size());
+      nbrSendRequests.resize(exportDisplacements.size());
+
+      // Receive all neighbour IDs:
+      size_t counter = 0;
+      for (std::map<MPI_processID,std::vector<int> >::iterator
+	   it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	 // Create a datatype for receiving all neighbour IDs with a single receive:
+	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),basicDatatype,&datatype);
+	 MPI_Type_commit(&datatype);
+	 
+	 // Post a receive:
+	 const MPI_processID source = it->first;
+	 const int tag              = it->first;
+	 void* buffer               = &(newCellNeighbours[0]);
+	 MPI_Irecv(buffer,1,datatype,source,tag,comm,&(nbrRecvRequests[counter]));
+	 MPI_Type_free(&datatype);
+	 ++counter;
+      }
+      
+      // Send cell neighbour IDs:
+      counter = 0;
+      for (std::map<MPI_processID,std::vector<int> >::iterator
+	   it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	 // Create a datatype for sending all neighbour IDs with a single send:
+	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),basicDatatype,&datatype);
+	 MPI_Type_commit(&datatype);
+
+	 // Post a send:
+	 const MPI_processID dest = it->first;
+	 const int tag            = getRank();
+	 void* buffer             = &(cellNeighbours[0]);
+	 MPI_Isend(buffer,1,datatype,dest,tag,comm,&(nbrSendRequests[counter]));
+	 MPI_Type_free(&datatype);
+	 ++counter;
+      }
+      
+      MPI_Type_free(&basicDatatype);
+   }
+   
    /** Start remote cell data synchronization. 
     * @param stencilID ID of the stencil.
     * @param transferID ID of the data transfer.
     * @return If true, synchronization started successfully.*/
    template<class C> inline
-   bool ParGrid<C>::startNeighbourExchange(StencilID stencilID,TransferID transferID) {
+   bool ParGrid<C>::startNeighbourExchange(StencilID stencilID,DataID userDataID) {
       if (getInitialized() == false) return false;
-      if (transferID == 0) return false;
       if (stencils.find(stencilID) == stencils.end()) return false;
-      return stencils[stencilID].startTransfer(transferID);
+      return stencils[stencilID].startTransfer(userDataID);
    }
 
    /** Every process tells every other process the global IDs of the cells it hosts. 
@@ -3128,7 +2346,7 @@ namespace pargrid {
 		     exit(1);
 	          }
 	          // DEBUG: Check that obtained local ID does not exceed array size:
-	          if (localID >= cells.size()) {
+	          if (localID >= N_totalCells) {
 		     std::cerr << "(PARGRID) ERROR: P#" << getRank() << " remote cell GID#" << remoteCells[c] << " local ID# ";
 		     std::cerr << localID << " above array bounds!" << std::endl;
 		     exit(1);
@@ -3152,122 +2370,19 @@ namespace pargrid {
     * @param transferID ID of the transfer.
     * @return If true, data synchronization completed successfully.*/
    template<class C> inline
-   bool ParGrid<C>::wait(StencilID stencilID,TransferID transferID) {
+   bool ParGrid<C>::wait(StencilID stencilID,DataID userDataID) {
       if (getInitialized() == false) return false;
-      typename std::map<StencilID,Stencil<C> >::iterator sten = stencils.find(stencilID);
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator sten = stencils.find(stencilID);
       if (sten == stencils.end()) return false;
-      return sten->second.wait(transferID);
-   }
-
-   // **************************************************** //
-   // ***** DEFINITIONS FOR ZOLTAN CALLBACK WRAPPERS ***** // 
-   // **************************************************** //
-
-   template<class C>
-   void cb_getAllCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,int N_cellIDs,ZOLTAN_ID_PTR globalID,
-				 ZOLTAN_ID_PTR localID,int N_coords,double* geometryData,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getAllCellCoordinates(N_globalEntries,N_localEntries,N_cellIDs,globalID,localID,N_coords,geometryData,rcode);
+      return sten->second.wait(userDataID);
    }
    
-   template<class C>
-   void cb_getCellCoordinates(void* pargrid,int N_globalEntries,int N_localEntries,ZOLTAN_ID_PTR globalID,
-			      ZOLTAN_ID_PTR localID,CellCoordinate* geometryData,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getCellCoordinates(N_globalEntries,N_localEntries,globalID,localID,geometryData,rcode);
-   }
-   
-   template<class C>
-   void cb_getAllCellEdges(void* pargrid,int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
-			   ZOLTAN_ID_PTR localIDs,int* N_edges,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
-			   int N_weights,CellWeight* edgeWeights,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getAllCellEdges(N_globalIDs,N_localIDs,N_cells,globalIDs,localIDs,N_edges,
-			   nbrGlobalIDs,nbrHosts,N_weights,edgeWeights,rcode);
-   }
-   
-   template<class C>
-   void cb_getCellEdges(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
-			ZOLTAN_ID_PTR localID,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
-			int N_weights,CellWeight* weight,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getCellEdges(N_globalIDs,N_localIDs,globalID,localID,nbrGlobalIDs,nbrHosts,N_weights,weight,rcode);
-   }
-   
-   template<class C>
-   void cb_getHierarchicalParameters(void* pargrid,int level,Zoltan_Struct* zs,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getHierarchicalParameters(level,zs,rcode);
-   }
-   
-   template<class C>
-   int cb_getHierarchicalPartNumber(void* pargrid,int level,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      return ptr->getHierarchicalPartNumber(level,rcode);
-   }
-   
-   template<class C>
-   void cb_getHyperedges(void* pargrid,int N_globalIDs,int N_vtxedges,int N_pins,int format,ZOLTAN_ID_PTR vtxedge_GID,
-			 int* vtxedge_ptr,ZOLTAN_ID_PTR pin_GID,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getHyperedges(N_globalIDs,N_vtxedges,N_pins,format,vtxedge_GID,vtxedge_ptr,pin_GID,rcode);
-   }
-   
-   template<class C>
-   void cb_getHyperedgeWeights(void* pargrid,int N_globalIDs,int N_localIDs,int N_edges,int N_weights,
-			       ZOLTAN_ID_PTR edgeGlobalID,ZOLTAN_ID_PTR edgeLocalID,CellWeight* edgeWeights,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getHyperedgeWeights(N_globalIDs,N_localIDs,N_edges,N_weights,edgeGlobalID,edgeLocalID,edgeWeights,rcode);
-   }
-   
-   template<class C>
-   void cb_getLocalCellList(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalIDs,
-			    ZOLTAN_ID_PTR localIDs,int N_weights,CellWeight* cellWeights,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getLocalCellList(N_globalIDs,N_localIDs,globalIDs,localIDs,N_weights,cellWeights,rcode);
-   }
-   
-   template<class C>
-   int cb_getMeshDimension(void* pargrid,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      return ptr->getMeshDimension(rcode);
-   }
-   
-   template<class C>
-   void cb_getNumberOfAllEdges(void* pargrid,int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
-			       ZOLTAN_ID_PTR localIDs,int* N_edges,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getNumberOfAllEdges(N_globalIDs,N_localIDs,N_cells,globalIDs,localIDs,N_edges,rcode);
-   }
-   
-   template<class C>
-   int cb_getNumberOfEdges(void* pargrid,int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,ZOLTAN_ID_PTR localID,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      return ptr->getNumberOfEdges(N_globalIDs,N_localIDs,globalID,localID,rcode);
-   }
-   
-   template<class C>
-   int cb_getNumberOfHierarchicalLevels(void* pargrid,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      return ptr->getNumberOfHierarchicalLevels(rcode);
-   }
-   
-   template<class C>
-   void cb_getNumberOfHyperedges(void* pargrid,int* N_lists,int* N_pins,int* format,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getNumberOfHyperedges(N_lists,N_pins,format,rcode);
-   }
-   
-   template<class C>
-   void cb_getNumberOfHyperedgeWeights(void* pargrid,int* N_edges,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      ptr->getNumberOfHyperedgeWeights(N_edges,rcode);
-   }
-   
-   template<class C>
-   int cb_getNumberOfLocalCells(void* pargrid,int* rcode) {
-      ParGrid<C>* ptr = reinterpret_cast<ParGrid<C>*>(pargrid);
-      return ptr->getNumberOfLocalCells(rcode);
+   template<class C> inline
+   void ParGrid<C>::waitMetadataRepartitioning(std::vector<MPI_Request>& nbrRecvRequests,
+					       std::vector<MPI_Request>& nbrSendRequests) {
+      // Wait for transfers to complete:
+      MPI_Waitall(nbrRecvRequests.size(),&(nbrRecvRequests[0]),MPI_STATUSES_IGNORE);
+      MPI_Waitall(nbrSendRequests.size(),&(nbrSendRequests[0]),MPI_STATUSES_IGNORE);
    }
 
    // ***************************************************** //
@@ -3284,14 +2399,15 @@ namespace pargrid {
     * @param localIDs Local IDs of cells whose coordinates are requested.
     * @param N_coords Dimensionality of the mesh.
     * @param geometryData Array in which cell coordinates are to be written.
-    * @param rcode Return code, upon successful exit value ZOLTAN_OK is written here.
-    */
-   template<class C>
+    * @param rcode Return code, upon successful exit value ZOLTAN_OK is written here.*/
+   template<class C> inline
    void ParGrid<C>::getAllCellCoordinates(int N_globalIDs,int N_localIDs,int N_cellIDs,ZOLTAN_ID_PTR globalIDs,
 					  ZOLTAN_ID_PTR localIDs,int N_coords,double* geometryData,int* rcode) {
-      typename std::map<CellID,ParCell<C> >::const_iterator it;
+      const double* coordinates = reinterpret_cast<double*>(getUserData(C::getCoordinateDataID()));
       for (int i=0; i<N_cellIDs; ++i) {
-	 cells[localIDs[i]].userData.getCoordinates(geometryData + i*N_coords);
+	 geometryData[3*i+0] = coordinates[3*localIDs[i]+0];
+	 geometryData[3*i+1] = coordinates[3*localIDs[i]+1];
+	 geometryData[3*i+2] = coordinates[3*localIDs[i]+2];
       }
       *rcode = ZOLTAN_OK;
    }
@@ -3305,22 +2421,24 @@ namespace pargrid {
     * @param localID The local ID of the cell whose coordinates are queried.
     * @param geometryData Array where the coordinates should be written. Zoltan has reserved this array, its size
     * is determined by the getGridDimensions function.
-    * @param rcode The return code. Upon success this should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success this should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getCellCoordinates(int N_globalEntries,int N_localEntries,ZOLTAN_ID_PTR globalID,
 				       ZOLTAN_ID_PTR localID,CellCoordinate* geometryData,int* rcode) {
       // Check that the given cell exists on this process:
       #ifdef DEBUG_PARGRID
-         if (localID >= N_localCells) {
-	    std::cerr << "ParGrid ERROR: getCellCoordinates queried non-existing cell #" << localID << std::endl;
+         if (localID[0] >= N_localCells) {
+	    std::cerr << "ParGrid ERROR: getCellCoordinates queried non-existing cell #" << localID[0] << std::endl;
 	    *rcode = ZOLTAN_FATAL;
 	    return;
 	 }
       #endif
 
       // Get cell coordinates from user:
-      cells[localID].userData.getCoordinates(geometryData);
+      const double* coordinates = reinterpret_cast<double*>(getUserData(C::getCoordinateDataID()));
+      geometryData[0] = coordinates[3*localID[0]+0];
+      geometryData[1] = coordinates[3*localID[0]+1];
+      geometryData[2] = coordinates[3*localID[0]+2];
       *rcode = ZOLTAN_OK;
    }
 
@@ -3337,9 +2455,8 @@ namespace pargrid {
     * @param nbrHosts For each neighbour, the rank of the MPI process who owns the cell.
     * @param N_weights The size of edge weight.
     * @param weight Array in which the weights of each edge are to be written.
-    * @param rcode Return code, upon successful exit value ZOLTAN_OK is written here.
-    */
-   template<class C>
+    * @param rcode Return code, upon successful exit value ZOLTAN_OK is written here.*/
+   template<class C> inline
    void ParGrid<C>::getAllCellEdges(int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
 				    ZOLTAN_ID_PTR localIDs,int* N_edges,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
 				    int N_weights,CellWeight* edgeWeights,int* rcode) {
@@ -3389,9 +2506,8 @@ namespace pargrid {
     * @param nbrHosts For each neighbour, the rank of the MPI process which has the cell.
     * @param N_weights The size of array weight.
     * @param weight The weight of each edge.
-    * @param rcode The return code. Upon success should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getCellEdges(int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
 				   ZOLTAN_ID_PTR localID,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
 				   int N_weights,CellWeight* weight,int* rcode) {
@@ -3412,14 +2528,14 @@ namespace pargrid {
 	    const CellID nbrLID = cellNeighbours[localID[0]*N_neighbours+n];
 	    if (nbrLID == invalid()) continue;
 	    nbrGlobalIDs[counter] = globalIDs[nbrLID];
-	    nbrHosts[counter]     = cells[nbrLID];
+	    nbrHosts[counter]     = hosts[nbrLID];
 	    ++counter;
 	 }
       }
       *rcode = ZOLTAN_OK;
    }
    
-   template<class C>
+   template<class C> inline
    void ParGrid<C>::getHierarchicalParameters(int level,Zoltan_Struct* zs,int* rcode) {
       #ifndef DEBUG
          // Sanity check on input parameters:
@@ -3434,7 +2550,7 @@ namespace pargrid {
       }
    }
    
-   template<class C>
+   template<class C> inline
    int ParGrid<C>::getHierarchicalPartNumber(int level,int* rcode) {
       #ifndef NDEBUG
          if (level < 0 || level >= loadBalancingParameters.size()) {*rcode = ZOLTAN_FATAL; return -1;}
@@ -3478,9 +2594,8 @@ namespace pargrid {
     * @param vtxedge_ptr An array where, for each hyperedge, an index into pin_GID is given from where the pins for that
     * hyperedge are given.
     * @param pin_GID An array where the pins are written to.
-    * @param rcode The return code. Upon success should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getHyperedges(int N_globalIDs,int N_vtxedges,int N_pins,int format,ZOLTAN_ID_PTR vtxedge_GID,
 				  int* vtxedge_ptr,ZOLTAN_ID_PTR pin_GID,int* rcode) {
       // Check that correct hyperedge format is requested:
@@ -3519,9 +2634,8 @@ namespace pargrid {
     * @param edgeLocalID An array where the local IDs of each weight-supplying hyperedge are to be written.
     * This array can be left empty.
     * @param edgeWeights An array where the hyperedge weights are written into.
-    * @param rcode The return code. Upon success should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getHyperedgeWeights(int N_globalIDs,int N_localIDs,int N_edges,int N_weights,
 					ZOLTAN_ID_PTR edgeGlobalID,ZOLTAN_ID_PTR edgeLocalID,CellWeight* edgeWeights,int* rcode) {
       unsigned int counter = 0;
@@ -3552,9 +2666,8 @@ namespace pargrid {
     * currently assigned to this process. This array has been allocated by Zoltan.
     * @param N_weights
     * @param cellWeights An array which is to be filled with the cell weights.
-    * @param rcode The return code. Upon success this should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success this should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getLocalCellList(int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalIDs,
 				     ZOLTAN_ID_PTR localIDs,int N_weights,CellWeight* cellWeights,int* rcode) {
       #ifndef NDEBUG
@@ -3592,9 +2705,8 @@ namespace pargrid {
     * three-dimensional mesh internally.
     * @param parGridPtr A pointer to ParGrid.
     * @param rcode The return code. Upon success this should be ZOLTAN_OK.
-    * @return The number of physical dimensions. Returns a value three.
-    */
-   template<class C>
+    * @return The number of physical dimensions. Returns a value three.*/
+   template<class C> inline
    int ParGrid<C>::getMeshDimension(int* rcode) {
       *rcode = ZOLTAN_OK;
       return 3;
@@ -3609,9 +2721,8 @@ namespace pargrid {
     * @param globalIDs Global IDs of cells whose number of edges are requested.
     * @param localIDs Local IDs of cells whose number of edges are requested.
     * @param N_edges Array in which the number of edges each cell has are to be written.
-    * @param rcode Return code, upon successful exit a value ZOLTAN_OK is written here.
-    */
-   template<class C>
+    * @param rcode Return code, upon successful exit a value ZOLTAN_OK is written here.*/
+   template<class C> inline
    void ParGrid<C>::getNumberOfAllEdges(int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
 				       ZOLTAN_ID_PTR localIDs,int* N_edges,int* rcode) {
       for (int i=0; i<N_cells; ++i) {
@@ -3635,9 +2746,8 @@ namespace pargrid {
     * @param localID The local ID of the cell whose edges are queried.
     * @param rcode The return code. Upon success this should be ZOLTAN_OK.
     * @return The number of edges the cell has. For three-dimensional box grid this is between 3 and 6,
-    * depending on if the cell is on the edge of the simulation volume.
-    */
-   template<class C>
+    * depending on if the cell is on the edge of the simulation volume.*/
+   template<class C> inline
    int ParGrid<C>::getNumberOfEdges(int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
 				    ZOLTAN_ID_PTR localID,int* rcode) {
       // Count the number of neighbours the cell has:
@@ -3668,9 +2778,8 @@ namespace pargrid {
     * @param N_pins The total number of pins (connections between vertices and hyperedges) is 
     * written to this variable.
     * @param format The chosen hyperedge storage format is written to this variable.
-    * @param rcode The return code. Upon success should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getNumberOfHyperedges(int* N_lists,int* N_pins,int* format,int* rcode) {
       *format = ZOLTAN_COMPRESSED_VERTEX;
       
@@ -3694,9 +2803,8 @@ namespace pargrid {
     * a weight factor. Here we give a weight to each hyperedge.
     * @param parGridPtr A pointer to ParGrid.
     * @param N_edges A parameter where the number of weight-supplying hyperedges is written into.
-    * @param rcode The return code. Upon success should be ZOLTAN_OK.
-    */
-   template<class C>
+    * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
+   template<class C> inline
    void ParGrid<C>::getNumberOfHyperedgeWeights(int* N_edges,int* rcode) {
       *N_edges = N_localCells;
       *rcode = ZOLTAN_OK;
@@ -3706,15 +2814,14 @@ namespace pargrid {
     * is required to use Zoltan. The purpose is to tell Zoltan how many cells
     * are currently assigned to this process.
     * @param rcode The return code. Upon success this should be ZOLTAN_OK.
-    * @return The number of cells assigned to this process.
-    */
-   template<class C>
+    * @return The number of cells assigned to this process.*/
+   template<class C> inline
    int ParGrid<C>::getNumberOfLocalCells(int* rcode) {
       // Get the size of localCells container:
       *rcode = ZOLTAN_OK;
       return N_localCells;
    }
    
-}
+} // namespace pargrid
 
 #endif
