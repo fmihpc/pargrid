@@ -43,6 +43,8 @@ namespace pargrid {
       void clear();
       const std::vector<CellID>& getBoundaryCells() const;
       const std::vector<CellID>& getInnerCells() const;
+      const std::map<MPI_processID,std::set<CellID> >& getRecvs() const;
+      const std::map<MPI_processID,std::set<CellID> >& getSends() const;
       bool getRemoteUpdates(DataID userDataID,unsigned int*& offsets,char*& buffer) const;
       bool initialize(PARGRID& pargrid,StencilType stencilType,const std::vector<NeighbourID>& receives);
       bool removeTransfer(DataID userDataID);
@@ -462,6 +464,11 @@ namespace pargrid {
     * @return Vector containing inner cell local IDs.*/
    template<class PARGRID,class C> inline
    const std::vector<CellID>& Stencil<PARGRID,C>::getInnerCells() const {return innerCells;}
+
+   /** Get list(s) of cells to receive from each neighbour process, ordered by their global IDs.
+    * @return List(s) of cells to receive.*/
+   template<class PARGRID,class C> inline
+   const std::map<MPI_processID,std::set<CellID> >& Stencil<PARGRID,C>::getRecvs() const {return recvs;}
    
    /** Get offset and buffer array for given user-defined ParGrid data array. This 
     * function should only be called for StencilType::remoteToLocalUpdates.
@@ -478,6 +485,11 @@ namespace pargrid {
       buffer  = it->second->buffer;
       return true;
    }
+
+   /** Get list(s) of cells sent to each neighbour process, ordered by their global IDs.
+    * @return List of cells to send to each neighbour process.*/
+   template<class PARGRID,class C> inline
+   const std::map<MPI_processID,std::set<CellID> >& Stencil<PARGRID,C>::getSends() const {return sends;}
    
    /** Initialize Stencil.
     * @param parGrid Pointer to ParGrid.

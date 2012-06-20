@@ -83,6 +83,7 @@ namespace pargrid {
       const std::vector<CellID>& getInnerCells(StencilID stencilID) const;
       const std::vector<CellID>& getInteriorCells();
       CellID getLocalID(CellID globalID) const;
+      const std::vector<CellID>& getLocalIDs() const;
       const std::vector<uint32_t>& getNeighbourFlags() const;
       uint32_t getNeighbourFlags(CellID cellID) const;
       const std::set<MPI_processID>& getNeighbourProcesses() const;
@@ -158,7 +159,8 @@ namespace pargrid {
       CellWeight cellWeight;                                              /**< Cell weight scale, used to calculate cell weights for Zoltan.*/
       std::vector<CellWeight> cellWeights;                                /**< Computational load of each local cell.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
-      std::vector<CellID> globalIDs;                                      /**< Global IDs of cells stored in vector cells.*/
+      std::vector<CellID> globalIDs;                                      /**< Global IDs of cells stored in this process.*/
+      std::vector<CellID> localIDs;                                       /**< Local IDs of cells stored in this process.*/
       CellID N_localCells;                                                /**< Number of local cells on this process.*/
       CellID N_totalCells;                                                /**< Total number of cells (local+buffered) on this process.*/
       std::map<CellID,CellID> global2LocalMap;                            /**< Global-to-local ID mapping.*/
@@ -215,6 +217,7 @@ namespace pargrid {
 				      int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
 				      std::map<MPI_processID,std::vector<int> >& exportDisplacements);
       bool syncCellHosts();
+      bool syncLocalIDs();
       void waitMetadataRepartitioning(std::vector<MPI_Request>& recvRequests,std::vector<MPI_Request>& sendRequests);
    };
    
@@ -1268,6 +1271,9 @@ namespace pargrid {
       return it->second;
    }
 
+   template<class C> inline
+   const std::vector<CellID>& ParGrid<C>::getLocalIDs() const {return localIDs;}
+   
    /** Get vector containing neighbour existence flags of local cells. The array 
     * is indexed with local IDs. The size of array is given by getNumberOfLocalCells().
     * @return Vector containing neighbour existence flags.*/
@@ -1669,6 +1675,12 @@ namespace pargrid {
       if (cellWeightsUsed == true) {
 	 cellWeights.resize(N_localCells);
 	 for (size_t i=0; i<cellWeights.size(); ++i) cellWeights[i] = DEFAULT_CELL_WEIGHT;
+      }
+      
+      // Sync local IDs:
+      if (syncLocalIDs() == false) {
+	 std::cerr << "(PARGRID) ERROR: Failed to sync localIDs vector!" << std::endl;
+	 exit(1);
       }
    }
    
@@ -2362,6 +2374,79 @@ namespace pargrid {
 	    delete [] remoteCells; remoteCells = NULL;
 	 }
       }
+      return true;
+   }
+   
+   /** Recalculate the contents of vector localIDs and sync data with neighbour processes.
+    * This function is called after mesh has been (re)partitioned.
+    * @return If true, localIDs vector was re-constructed and synced successfully.*/
+   template<class C> inline
+   bool ParGrid<C>::syncLocalIDs() {
+      #ifndef NDEBUG
+         if (getInitialized() == false) return false;
+      #endif
+      
+      // Reallocate vector localIDs:
+	{
+	   std::vector<CellID> dummy;
+	   localIDs.swap(dummy);
+	}
+      localIDs.resize(N_totalCells);
+      for (CellID c=0; c<N_localCells; ++c) localIDs[c] = c;
+      
+      // Get lists of cells to send and receive, ordered by global IDs:
+      const std::map<MPI_processID,std::set<CellID> >& recvs = stencils[DEFAULT_STENCIL].getRecvs();
+      const std::map<MPI_processID,std::set<CellID> >& sends = stencils[DEFAULT_STENCIL].getSends();
+      
+      // Make sure enough MPI Requests are available:
+      if (recvRequests.size() < recvs.size()) recvRequests.resize(recvs.size());
+      if (sendRequests.size() < sends.size()) sendRequests.resize(sends.size());
+      
+      // Calculate receive displacements and post receive(s):
+      int recvCounter = 0;
+      std::vector<int> displacements;
+      for (typename std::map<MPI_processID,std::set<CellID> >::const_iterator proc=recvs.begin(); proc!=recvs.end(); ++proc) {
+	 // Calculate displacements:
+	 displacements.clear();
+	 for (std::set<CellID>::const_iterator cell=proc->second.begin(); cell!=proc->second.end(); ++cell) {
+	    const CellID localID = global2LocalMap[*cell];
+	    displacements.push_back(localID);
+	 }
+	 
+	 // Create derived MPI datatype for receiving all cell IDs from 
+	 // neighbour process proc and post a receive:
+	 MPI_Datatype datatype;
+	 MPI_Type_create_indexed_block(displacements.size(),1,&(displacements[0]),MPI_Type<CellID>(),&datatype);
+	 MPI_Type_commit(&datatype);
+	 MPI_Irecv(&(localIDs[0]),1,datatype,proc->first,proc->first,comm,&(recvRequests[recvCounter]));
+	 MPI_Type_free(&datatype);
+	 ++recvCounter;
+      }
+      
+      // Calculate send displacements and post send(s):
+      int sendCounter = 0;
+      for (typename std::map<MPI_processID,std::set<CellID> >::const_iterator proc=sends.begin(); proc!=sends.end(); ++proc) {
+	 // Calculate displacements:
+	 displacements.clear();
+	 for (std::set<CellID>::const_iterator cell=proc->second.begin(); cell!=proc->second.end(); ++cell) {
+	    const CellID localID = global2LocalMap[*cell];
+	    displacements.push_back(localID);
+	 }
+	 
+	 // Create derived MPI datatype for sending all cell IDs to 
+	 // neighbour process proc and post a send:
+	 MPI_Datatype datatype;
+	 MPI_Type_create_indexed_block(displacements.size(),1,&(displacements[0]),MPI_Type<CellID>(),&datatype);
+	 MPI_Type_commit(&datatype);
+	 MPI_Isend(&(localIDs[0]),1,datatype,proc->first,getRank(),comm,&(sendRequests[sendCounter]));
+	 MPI_Type_free(&datatype);
+	 
+	 ++sendCounter;
+      }
+      
+      // Wait for transfers to complete:
+      MPI_Waitall(recvCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+      MPI_Waitall(sendCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
       return true;
    }
 
