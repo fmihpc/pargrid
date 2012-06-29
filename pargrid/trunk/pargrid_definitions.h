@@ -19,6 +19,7 @@
 #ifndef PARGRID_DEFINITIONS_H
 #define PARGRID_DEFINITIONS_H
 
+#include <cstdlib>
 #include <stdint.h>
 #include <limits>
 
