@@ -92,9 +92,11 @@ namespace pargrid {
       MPI_processID getProcesses() const;
       MPI_processID getRank() const;
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
-      bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,char*& buffer) const;
+      template<typename T> bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,T*& buffer) const;
       char* getUserData(DataID userDataID);
       char* getUserData(const std::string& name);
+      template<typename T> T* getUserDataStatic(DataID userDataID);
+      template<typename T> T* getUserDataStatic(const std::string& name);
       template<typename T> DataWrapper<T> getUserDataDynamic(DataID userDataID);
       template<typename T> DataWrapper<T> getUserDataDynamic(const std::string& name);
       unsigned int getUserDataElementSize(DataID userDataID) const;
@@ -1350,8 +1352,8 @@ namespace pargrid {
     * @param offsets Address of array containing offsets to array buffer is copied here.
     * @param buffer Address of array containing remote updates is copied here.
     * @return If true, offsets and buffer arrays contain valid pointers.*/
-   template<class C> inline
-   bool ParGrid<C>::getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,char*& buffer) const {
+   template<class C> template<typename T> inline
+   bool ParGrid<C>::getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,T*& buffer) const {
       offsets = NULL;
       buffer = NULL;
       #ifndef NDEBUG
@@ -1360,7 +1362,11 @@ namespace pargrid {
       #endif
       typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator it=stencils.find(stencilID);
       if (it == stencils.end()) return false;
-      return it->second.getRemoteUpdates(userDataID,offsets,buffer);
+      
+      char* ptr = NULL;
+      const bool rvalue = it->second.getRemoteUpdates(userDataID,offsets,ptr);
+      buffer = reinterpret_cast<T*>(ptr);
+      return rvalue;
    }
    
    /** Get pointer to user-defined data array.
@@ -1385,6 +1391,31 @@ namespace pargrid {
 	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
 	 if (it->second->getName() == name) return it->second->array;
       }      
+      return NULL;
+   }
+   
+   /** Get pointer to user-defined data array.
+    * @param userDataID ID number of the array, as returned by addUserData.
+    * @return Pointer to array or NULL if an array with given ID does not exist.
+    * @see addUserData.*/
+   template<class C> template<typename T> inline
+   T* ParGrid<C>::getUserDataStatic(DataID userDataID) {
+      #ifndef NDEBUG
+         if (userDataStatic.find(userDataID) == userDataStatic.end()) return NULL;
+      #endif
+      return reinterpret_cast<T*>(userDataStatic[userDataID]->array);
+   }
+   
+   /** Get pointer to user-defined data array.
+    * @param name Unique name of the array. This name was given in addUserData.
+    * @return Pointer to array or NULL if an array with given name does not exist.
+    * @see addUserData.*/
+   template<class C> template<typename T> inline
+   T* ParGrid<C>::getUserDataStatic(const std::string& name) {
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second->getName() == name) return reinterpret_cast<T*>(it->second->array);
+      }
       return NULL;
    }
    
