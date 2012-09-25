@@ -48,11 +48,13 @@ namespace pargrid {
       void getDatatype(const std::set<CellID>& globalIDs,MPI_Datatype& datatype);
       unsigned int getElementSize() const {return N_elements*byteSize;}
       const std::string& getName() const;
-      void initialize(PARGRID* pargrid,const std::string& name,size_t N_cells,unsigned int elements,unsigned int byteSize);
+      void initialize(PARGRID* pargrid,const std::string& name,size_t N_cells,unsigned int elements,
+		      unsigned int byteSize,const std::string& datatype);
       
       char* array;                   /**< Pointer to array containing the data.*/
       std::string name;              /**< Name of the array.*/
       unsigned int byteSize;         /**< Byte size of a single array element, i.e. sizeof(double) for a double array.*/
+      std::string datatype;          /**< Datatype stored in array, "int", "uint", or "float".*/
       unsigned int N_cells;          /**< Number of cells (=elements) in the array, equal to the number of 
 				      *                                       * cells (local+remote) on this process.*/
       unsigned int N_elements;       /**< How many values are reserved per cell.*/
@@ -77,7 +79,7 @@ namespace pargrid {
     * @param udw UserDataStatic whose copy is to be made.*/
    template<class PARGRID> inline
    UserDataStatic<PARGRID>::UserDataStatic(const UserDataStatic& udw) {
-      initialize(const_cast<PARGRID*>(udw.pargrid),udw.name,udw.N_cells,udw.N_elements,udw.byteSize);
+      initialize(const_cast<PARGRID*>(udw.pargrid),udw.name,udw.N_cells,udw.N_elements,udw.byteSize,udw.datatype);
       for (size_t i=0; i<N_cells*N_elements*byteSize; ++i) array[i] = udw.array[i];
    }
 
@@ -101,6 +103,7 @@ namespace pargrid {
    bool UserDataStatic<PARGRID>::finalize() {
       byteSize = 0;
       name = "";
+      datatype = "";
       pargrid = NULL;
       N_elements = 0;
       N_cells = 0;
@@ -148,14 +151,17 @@ namespace pargrid {
     * on this process (local + remote).
     * @param N_elements How many values of byte size byteSize are allocated per cell. This makes it 
     * possible to allocate, say, five doubles per cell.
-    * @param byteSize Byte size of single value, i.e. sizeof(double) for doubles.*/
+    * @param byteSize Byte size of single value, i.e. sizeof(double) for doubles.
+    * @param datatype Basic datatype stored in the array, either "int", "uint", or "float".*/
    template<class PARGRID> inline
-   void UserDataStatic<PARGRID>::initialize(PARGRID* pargrid,const std::string& name,size_t N_cells,unsigned int N_elements,unsigned int byteSize) {
+   void UserDataStatic<PARGRID>::initialize(PARGRID* pargrid,const std::string& name,size_t N_cells,
+					    unsigned int N_elements,unsigned int byteSize,const std::string& datatype) {
       this->pargrid = pargrid;
       this->name = name;
       this->byteSize = byteSize;
       this->N_elements = N_elements;
       this->N_cells = N_cells;
+      this->datatype = datatype;
       array = new char[N_cells*N_elements*byteSize];
       
       // Create an MPI datatype that transfers a single array element:

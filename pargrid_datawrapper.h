@@ -12,7 +12,7 @@ namespace pargrid {
    template<typename T>
    class DataWrapper {
     public:
-      DataWrapper(char** arrays,ArraySizetype* capacities,CellID N_cells,ArraySizetype* sizes);
+      DataWrapper(char** arrays,ArraySizetype* capacities,CellID N_cells,ArraySizetype* sizes,uint64_t elementByteSize);
       const ArraySizetype* capacity() const;
       ArraySizetype capacity(CellID cell) const;
       T** data() const;
@@ -26,9 +26,10 @@ namespace pargrid {
       
     private:
       T** arrays;                   /**< Pointers to arrays containing user data for each cell.*/
-      ArraySizetype* capacities;    /**< Current capacity of each cell.*/
+      ArraySizetype* capacities;    /**< Current capacity of each cell, counted in array elements having byte size elementByteSize.*/
+      uint64_t elementByteSize;     /**< Byte size of an array element.*/
       CellID N_cells;               /**< Number of cells in arrays, capacities, and sizes.*/
-      ArraySizetype* sizes;         /**< Current size of each cell.*/
+      ArraySizetype* sizes;         /**< Current size of each cell, counted in array elements having byte size elementByteSiz.*/
       
       /** Private default constructor to prevent the creation 
        * of DataWrappers that point to an invalid ParGrid dynamic data array.*/
@@ -37,16 +38,17 @@ namespace pargrid {
 
    /** Create a new DataWrapper for given ParGrid dynamic data array.
     * @param arrays Arrays containing the data for each cell.
-    * @param capacities Array containing current capacity for each cell.
-    * @param elementByteSize
+    * @param capacities Array containing current capacity for each cell, counted in array elements having byte size elementByteSize.
     * @param N_cells Number of cells in the mesh local to this process.
-    * @param sizes Array containing current size for each cell.*/
+    * @param sizes Array containing current size for each cell, counted in array elements having byte size elementByteSize.
+    * @param elementByteSize Byte size of an array element.*/
    template<typename T> inline
-   DataWrapper<T>::DataWrapper(char** arrays,ArraySizetype* capacities,CellID N_cells,ArraySizetype* sizes) {
+   DataWrapper<T>::DataWrapper(char** arrays,ArraySizetype* capacities,CellID N_cells,ArraySizetype* sizes,uint64_t elementByteSize) {
       this->arrays          = reinterpret_cast<T**>(arrays);
       this->capacities      = capacities;
       this->N_cells         = N_cells;
       this->sizes           = sizes;
+      this->elementByteSize = elementByteSize;
    }
 
    /** Get the array containing current capacities of cells.
@@ -72,7 +74,8 @@ namespace pargrid {
     * can be obtained from the array returned by size() member function.
     * @return Pointers to arrays containing dynamic user data.*/
    template<typename T> inline
-   T** DataWrapper<T>::data() const {return reinterpret_cast<T**>(arrays);}
+   //T** DataWrapper<T>::data() const {return reinterpret_cast<T**>(arrays);}
+   T** DataWrapper<T>::data() const {return arrays;}
 
    /** Insert a new element to the given cell. This function increases the 
     * capacity of the cell by a factor of two if the current capacity is too 
@@ -196,10 +199,11 @@ namespace pargrid {
 	 // Old capacity is too small, increase it and 
 	 // copy contents from old array into a new one:
 	 capacities[cell] = newSize;
-	 T* tmp = new T[newSize];
-	 for (ArraySizetype i=0; i<sizes[cell]; ++i) tmp[i] = arrays[cell][i];
+	 char* ptr = reinterpret_cast<char*>(arrays[cell]);
+	 char* tmp = new char[newSize*elementByteSize];
+	 for (uint64_t i=0; i<sizes[cell]*elementByteSize; ++i) tmp[i] = ptr[i];
 	 delete [] arrays[cell];
-	 arrays[cell] = tmp;
+	 arrays[cell] = reinterpret_cast<T*>(tmp);
 	 
 	 // Resize array:
 	 sizes[cell] = newSize;
