@@ -1,0 +1,15 @@
+*************************************
+***** CHANGES IN REVISION 00286 *****
+*************************************
+
+DataWrapper was updated to include element byte size stored in dynamic
+array. This was a necessary change to make restarting possible.
+
+UserDataStatic and UserDataDynamic now contain string representation of the 
+stored data. These were added to make restarting possible.
+
+New functions were added to ParGrid to get more information on the
+data stored in ParGrid arrays. These new functions are used in
+restarting simulations.
+
+Two outdated functions were removed.

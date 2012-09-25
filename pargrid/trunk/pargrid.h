@@ -49,7 +49,6 @@
 #include "pargrid_zoltan_callbacks.h"
 #include "pargrid_userdata_static.h"
 #include "pargrid_userdata_dynamic.h"
-//#include "pargrid_userdata_dynamic_old.h"
 #include "pargrid_stencil.h"
 #include "pargrid_datawrapper.h"
 
@@ -65,6 +64,7 @@ namespace pargrid {
       bool addDataTransfer(DataID userDataID,StencilID stencilID);
       StencilID addStencil(pargrid::StencilType stencilType,const std::vector<NeighbourID>& recvNbrTypeIDs);
       template<typename T> DataID addUserData(const std::string& name,unsigned int N_elements,bool isDynamic=false);
+      DataID addUserData(const std::string& name,uint64_t N_elements,const std::string& datatype,uint64_t dataSize,bool isDynamic=false);
       bool balanceLoad();
       void barrier() const;
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
@@ -76,6 +76,9 @@ namespace pargrid {
       CellID* getCellNeighbourIDs(CellID cellID);
       std::vector<CellWeight>& getCellWeights();
       MPI_Comm getComm() const;
+      void getDynamicUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,
+				  std::vector<ArraySizetype*>& sizeArrays,std::vector<std::string>& datatypes,
+				  std::vector<unsigned int>& byteSizes,std::vector<const char**>& pointers) const;
       const std::vector<CellID>& getExteriorCells();
       const std::vector<CellID>& getGlobalIDs() const;
       const std::vector<MPI_processID>& getHosts() const;
@@ -93,6 +96,8 @@ namespace pargrid {
       MPI_processID getRank() const;
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
       template<typename T> bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,T*& buffer) const;
+      void getStaticUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,std::vector<unsigned int>& elements,
+				 std::vector<std::string>& datatypes,std::vector<unsigned int>& byteSizes,std::vector<const char*>& pointers) const;
       char* getUserData(DataID userDataID);
       char* getUserData(const std::string& name);
       template<typename T> T* getUserDataStatic(DataID userDataID);
@@ -100,8 +105,6 @@ namespace pargrid {
       template<typename T> DataWrapper<T> getUserDataDynamic(DataID userDataID);
       template<typename T> DataWrapper<T> getUserDataDynamic(const std::string& name);
       unsigned int getUserDataElementSize(DataID userDataID) const;
-      void getUserDataIDs(std::vector<DataID>& userDataIDs) const;
-      bool getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const;
       bool getUserDatatype(DataID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
       bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
       CellID invalid() const;
@@ -222,6 +225,36 @@ namespace pargrid {
       bool syncLocalIDs();
       void waitMetadataRepartitioning(std::vector<MPI_Request>& recvRequests,std::vector<MPI_Request>& sendRequests);
    };
+
+
+   template<typename T> inline
+   std::string getDatatype() {return "unknown";}
+     
+   template<> inline
+   std::string getDatatype<int8_t>() {return "int";}
+   template<> inline
+   std::string getDatatype<int16_t>() {return "int";}
+   template<> inline
+   std::string getDatatype<int32_t>() {return "int";}
+   template<> inline
+   std::string getDatatype<int64_t>() {return "int";}
+      
+   template<> inline
+   std::string getDatatype<uint8_t>() {return "uint";}
+   template<> inline
+   std::string getDatatype<uint16_t>() {return "uint";}
+   template<> inline
+   std::string getDatatype<uint32_t>() {return "uint";}
+   template<> inline
+   std::string getDatatype<uint64_t>() {return "uint";}
+      
+   template<> inline
+   std::string getDatatype<float>() {return "float";}
+   template<> inline
+   std::string getDatatype<double>() {return "float";}
+   template<> inline
+   std::string getDatatype<long double>() {return "float";}
+
    
    /** Constructor for ParGrid. Initializes Zoltan. Note that MPI_Init must 
     * have been called prior to calling ParGrid constructor.
@@ -389,14 +422,15 @@ namespace pargrid {
     * @see addUserDataTransfer.*/
    template<class C> template<typename T> inline
    DataID ParGrid<C>::addUserData(const std::string& name,unsigned int N_elements,bool isDynamic) {
-      // Check that a user data array (static or dynamic) with the given name doesn't already exist:
+      // Check that a user data array (static or dynamic) with the given name doesn't already exist.
+      // If it does return the DataID of the existing array:
       for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator 
 	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
-	 if (it->second->getName() == name) return invalidDataID();
+	 if (it->second->getName() == name) return it->first;
       }
       for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
 	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
-	 if (it->second->getName() == name) return invalidDataID();
+	 if (it->second->getName() == name) return it->first;
       }
   
       // Assign an ID number to the array:
@@ -411,10 +445,43 @@ namespace pargrid {
       // Initialize the new user data array:
       if (isDynamic == false) {
 	 userDataStatic[userDataID] = new UserDataStatic<ParGrid<C> >();
-	 userDataStatic[userDataID]->initialize(this,name,N_totalCells,N_elements,sizeof(T));
+	 userDataStatic[userDataID]->initialize(this,name,N_totalCells,N_elements,sizeof(T),pargrid::getDatatype<T>());
       } else {
 	 userDataDynamic[userDataID] = new UserDataDynamic<ParGrid<C> >();
-	 userDataDynamic[userDataID]->initialize(this,name,N_totalCells,sizeof(T));
+	 userDataDynamic[userDataID]->initialize(this,name,N_totalCells,sizeof(T),pargrid::getDatatype<T>());
+      }
+      return userDataID;
+   }
+   
+   template<class C> inline
+   DataID ParGrid<C>::addUserData(const std::string& name,uint64_t N_elements,const std::string& datatype,uint64_t dataSize,bool isDynamic) {
+      // Check that a user data array (static or dynamic) with the given name doesn't already exist.
+      // If it does return the DataID of the existing array:
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second->getName() == name) return it->first;
+      }
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second->getName() == name) return it->first;
+      }
+      
+      // Assign a unique DataID to the array:
+      DataID userDataID = invalidDataID();
+      if (userDataHoles.size() > 0) {
+	 userDataID = *userDataHoles.begin();
+	 userDataHoles.erase(userDataID);
+      } else {
+	 userDataID = userDataStatic.size() + userDataDynamic.size();
+      }
+      
+      // Initialize the new user data array:
+      if (isDynamic == false) {
+	 userDataStatic[userDataID] = new UserDataStatic<ParGrid<C> >();
+	 userDataStatic[userDataID]->initialize(this,name,N_totalCells,N_elements,dataSize,datatype);
+      } else {
+	 userDataDynamic[userDataID] = new UserDataDynamic<ParGrid<C> >();
+	 userDataDynamic[userDataID]->initialize(this,name,N_totalCells,dataSize,datatype);
       }
       return userDataID;
    }
@@ -433,7 +500,7 @@ namespace pargrid {
 	 if (it == stencils.end()) return false;
 	 return it->second.addUserDataTransfer(userDataID,false);
       } else {
-	 std::cerr << "(PARGRID) addDataTransfer not implemented for dynamically allocated data!" << std::endl;
+	 std::cerr << "(PARGRID) ERROR: Could not find user data with ID#" << userDataID << " in addDataTransfer!" << std::endl;
 	 return false;
       }
    }
@@ -1194,6 +1261,37 @@ namespace pargrid {
    template<class C> inline
    MPI_Comm ParGrid<C>::getComm() const {return comm;}
 
+   /** Get information on data stored in dynamic arrays.
+    * @param dataIDs Vector in which Data IDs of allocated arrays are copied.
+    * @param names Names of allocated arrays are copied here.
+    * @param sizeArrays Pointers to size arrays for each (dynamic) array are copied here.
+    * @param datatypes String representations of data stored in each array are copied here.
+    * @param byteSizes Byte sizes of data stored in each array are copied here.
+    * @param pointers Pointers to actual data stored in each array are copied here.*/
+   template<class C> inline
+   void ParGrid<C>::getDynamicUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,
+					   std::vector<ArraySizetype*>& sizeArrays,std::vector<std::string>& datatypes,
+					   std::vector<unsigned int>& byteSizes,std::vector<const char**>& pointers) const {
+      dataIDs.clear();
+      names.clear();
+      sizeArrays.clear();
+      datatypes.clear();
+      byteSizes.clear();
+      pointers.clear();
+      
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second == NULL) continue;
+	 dataIDs.push_back(it->first);
+	 names.push_back(it->second->getName());
+	 sizeArrays.push_back(it->second->getSizePointer());
+	 datatypes.push_back(it->second->getDatatype());
+	 byteSizes.push_back(it->second->getElementByteSize());
+	 const char** ptr = const_cast<const char**>(it->second->getArrayPointer());
+	 pointers.push_back(ptr);
+      }
+   }
+   
    /** Get list of exterior cells. Exterior cells are cells that have at least one missing 
     * neighbour, i.e. these cells are situated at the boundary of the simulation domain.
     * @return Vector containing local IDs of exterior cells.*/
@@ -1368,6 +1466,35 @@ namespace pargrid {
       buffer = reinterpret_cast<T*>(ptr);
       return rvalue;
    }
+
+   /** Get information on static user data arrays stored in ParGrid.
+    * @param dataIDs Unique ParGrid data ID numbers.
+    * @param names Unique array names.
+    * @param elements Number of elements per cell in each array.
+    * @param byteSizes Byte sizes of basic datatypes in each array.
+    * @param pointers Pointer to each array.*/
+   template<class C> inline
+   void ParGrid<C>::getStaticUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,std::vector<unsigned int>& elements,
+					  std::vector<std::string>& datatypes,
+					  std::vector<unsigned int>& byteSizes,std::vector<const char*>& pointers) const {
+      dataIDs.clear();
+      names.clear();
+      elements.clear();
+      datatypes.clear();					     
+      byteSizes.clear();
+      pointers.clear();
+      
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second == NULL) continue;
+	 dataIDs.push_back(it->first);
+	 names.push_back(it->second->name);
+	 elements.push_back(it->second->N_elements);
+	 datatypes.push_back(it->second->datatype);
+	 byteSizes.push_back(it->second->byteSize);
+	 pointers.push_back(it->second->array);
+      }
+   }
    
    /** Get pointer to user-defined data array.
     * @param userDataID ID number of the array, as returned by addUserData.
@@ -1429,14 +1556,15 @@ namespace pargrid {
       // If dynamic data array with given ID does not exist,
       // return an invalid DataWrapper:
       if (it == userDataDynamic.end()) {
-	 return DataWrapper<T>(NULL,NULL,0,NULL);
+	 return DataWrapper<T>(NULL,NULL,0,NULL,0);
       }
       
       // Return DataWrapper associated with requested dynamic data array:
       return DataWrapper<T>(it->second->getArrayPointer(),
 			    it->second->getCapacityPointer(),
 			    it->second->getNumberOfCells(),
-			    it->second->getSizePointer());
+			    it->second->getSizePointer(),
+			    it->second->getElementByteSize());
    }
    
    /** Get user array containing dynamically allocated data.
@@ -1451,28 +1579,14 @@ namespace pargrid {
 	    return DataWrapper<T>(it->second->getArrayPointer(),
 				  it->second->getCapacityPointer(),
 				  it->second->getNumberOfCells(),
-				  it->second->getSizePointer());
+				  it->second->getSizePointer(),
+				  it->second->getElementByteSize());
 	 }
       }
       // Dynamic user data with given name was not found:
-      return DataWrapper<T>(NULL,NULL,0,NULL);
+      return DataWrapper<T>(NULL,NULL,0,NULL,0);
    }
-   
-   /** Get all valid user data ID numbers.
-    * @param userDataIDs Vector in which valid user data IDs are written to.*/
-   template<class C> inline
-   void ParGrid<C>::getUserDataIDs(std::vector<DataID>& userDataIDs) const {
-      userDataIDs.clear();
-      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
-	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
-	 userDataIDs.push_back(it->first);
-      }
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
-	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
-	 userDataIDs.push_back(it->first);
-      }
-   }
-   
+
    /** Get the byte size of an array element in given user-defined array. 
     * The value is equal to number of elements per cell times byte size of basic datatype.
     * @param userDataID ID number of the user data array.
@@ -1486,27 +1600,7 @@ namespace pargrid {
       #endif
       return it->second->getElementSize();
    }
-   
-   /** Get information on given user-defined data array.
-    * @param userDataID ID number of user array.
-    * @param name Variable in which name of the user array is written.
-    * @param byteSize Variable in which byte size of the basic datatype is written.
-    * @param N_elements Variable in which number of basic datatypes per parallel cell is written.
-    * @param ptr Variable in which pointer to user array is written.
-    * @return If true, user array with given ID exists and output variables contain valid values.*/
-   template<class C> inline
-   bool ParGrid<C>::getUserDataInfo(DataID userDataID,std::string& name,unsigned int& byteSize,unsigned int& N_elements,char*& ptr) const {
-      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator it = userDataStatic.find(userDataID);
-      #ifndef NDEBUG
-         if (it == userDataStatic.end()) return false;
-      #endif
-      name       = it->second->name;
-      byteSize   = it->second->byteSize;
-      N_elements = it->second->N_elements;
-      ptr        = it->second->array;
-      return true;
-   }
-   
+
    /** Get an MPI derived datatype that transfers all given cells of a user data array. 
     * MPI_Type_commit is called for the created datatype, MPI_Type_free must be called elsewhere.
     * @param userDataID ID number of the user array.
@@ -1826,7 +1920,7 @@ namespace pargrid {
 	    }
 	 #endif
 	 newUserData[it->first] = new UserDataStatic<ParGrid<C> >();
-	 newUserData[it->first]->initialize(this,it->second->name,N_cells,it->second->N_elements,it->second->byteSize);
+	 newUserData[it->first]->initialize(this,it->second->name,N_cells,it->second->N_elements,it->second->byteSize,it->second->datatype);
       }
       
       // Allocate enough send and recv requests:
@@ -1969,7 +2063,7 @@ namespace pargrid {
 	    }
          #endif
 	 newUserData[it->first] = new UserDataDynamic<ParGrid<C> >();
-	 newUserData[it->first]->initialize(this,it->second->getName(),N_cells,it->second->getElementByteSize());
+	 newUserData[it->first]->initialize(this,it->second->getName(),N_cells,it->second->getElementByteSize(),it->second->getDatatype());
       }
       
       // ************************************************************* //
