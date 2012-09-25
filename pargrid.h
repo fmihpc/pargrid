@@ -314,8 +314,9 @@ namespace pargrid {
             
       uint32_t nbrFlag = (1 << calcNeighbourTypeID(0,0,0));
       for (size_t n=0; n<nbrIDs.size(); ++n) {
+	 //if (nbrIDs[n] == invalid()) success = false;
+	 if (nbrIDs[n] == invalid()) continue;
 	 if (nbrTypes[n] > calcNeighbourTypeID(1,1,1)) success = false;
-	 if (nbrIDs[n] == invalid()) success = false;
 	 
 	 cellNeighbours[offset+nbrTypes[n]]     = nbrIDs[n];
 	 nbrFlag = (nbrFlag | (1 << nbrTypes[n]));
