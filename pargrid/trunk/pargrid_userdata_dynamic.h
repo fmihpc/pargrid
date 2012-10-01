@@ -129,8 +129,9 @@ namespace pargrid {
     * @param datatype Variable in which the derived datatype is to be written.*/   
    template<class PARGRID> inline
    void UserDataDynamic<PARGRID>::getDatatype(const std::set<CellID>& globalIDs,MPI_Datatype& datatype) {
-      // Calculate displacements relative to MPI_BOTTOM (in bytes):
-      ArraySizetype* blockLengths = new ArraySizetype[globalIDs.size()];
+      // Calculate displacements relative to MPI_BOTTOM (in bytes). 
+      // Array blockLengths needs to be 'int' array here because of MPI:
+      int* blockLengths           = new int[globalIDs.size()];
       MPI_Aint* displacements     = new MPI_Aint[globalIDs.size()];
       CellID counter = 0;
       for (std::set<CellID>::const_iterator globalID=globalIDs.begin(); globalID!=globalIDs.end(); ++globalID) {
