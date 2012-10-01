@@ -92,6 +92,8 @@ namespace pargrid {
       const std::set<MPI_processID>& getNeighbourProcesses() const;
       CellID getNumberOfAllCells() const;
       CellID getNumberOfLocalCells() const;
+      std::size_t getNumberOfReceives(StencilID stencilID,MPI_processID hostID) const;
+      std::size_t getNumberOfSends(StencilID stencilID,MPI_processID hostsID) const;
       MPI_processID getProcesses() const;
       MPI_processID getRank() const;
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
@@ -229,6 +231,11 @@ namespace pargrid {
 
    template<typename T> inline
    std::string getDatatype() {return "unknown";}
+
+   template<> inline
+   std::string getDatatype<bool>() {return "int";}
+   template<> inline
+   std::string getDatatype<char>() {return "int";}
      
    template<> inline
    std::string getDatatype<int8_t>() {return "int";}
@@ -1410,6 +1417,38 @@ namespace pargrid {
     * @return Number of local cells.*/
    template<class C> inline
    CellID ParGrid<C>::getNumberOfLocalCells() const {return N_localCells;}
+   
+   template<class C> inline
+   std::size_t ParGrid<C>::getNumberOfReceives(StencilID stencilID,MPI_processID hostID) const {
+      // Attempt to find the requested Stencil:
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator stencil = stencils.find(stencilID);
+      if (stencil == stencils.end()) return 0;
+      
+      // Get received cells from Stencil:
+      const std::map<MPI_processID,std::set<CellID> >& recvs = stencil->second.getRecvs();
+      
+      // Check that the Stencil receives cells from the given MPI process, and if it does,
+      // return the number of received cells:
+      typename std::map<MPI_processID,std::set<CellID> >::const_iterator host = recvs.find(hostID);
+      if (host == recvs.end()) return 0;
+      return host->second.size();
+   }
+   
+   template<class C> inline
+   std::size_t ParGrid<C>::getNumberOfSends(StencilID stencilID,MPI_processID hostID) const {
+      // Attempt to find the requested Stencil:
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator stencil = stencils.find(stencilID);
+      if (stencil == stencils.end()) return 0;
+      
+      // Get sent cells from Stencil:
+      const std::map<MPI_processID,std::set<CellID> >& sends = stencil->second.getSends();
+      
+      // Check that the Stencil sends cells to the given MPI process, and if it does,
+      // return the number of sent cells:
+      typename std::map<MPI_processID,std::set<CellID> >::const_iterator host = sends.find(hostID);
+      if (host == sends.end()) return 0;
+      return host->second.size();
+   }
    
    /** Get the number of MPI processes in the communicator used by ParGrid.
     * The value returned by this function is set in ParGrid::initialize.
