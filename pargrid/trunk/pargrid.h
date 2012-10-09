@@ -59,30 +59,23 @@ namespace pargrid {
       ParGrid();
       ~ParGrid();
 
-      bool addCell(CellID cellID,const std::vector<CellID>& nbrIDs,const std::vector<NeighbourID>& nbrTypes);
-      bool addCellFinished();
+      // ***************************************** //
+      // ***** INTERFACE AIMED FOR END USERS ***** //
+      // ***************************************** //
+      
       bool addDataTransfer(DataID userDataID,StencilID stencilID);
       StencilID addStencil(pargrid::StencilType stencilType,const std::vector<NeighbourID>& recvNbrTypeIDs);
       template<typename T> DataID addUserData(const std::string& name,unsigned int N_elements,bool isDynamic=false);
       DataID addUserData(const std::string& name,uint64_t N_elements,const std::string& datatype,uint64_t dataSize,bool isDynamic=false);
-      bool balanceLoad();
-      void barrier() const;
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
       NeighbourID calcNeighbourTypeID(int i_off,int j_off,int k_off) const;
       bool checkPartitioningStatus(int& counter) const;
-      void clearCellWeights();
-      bool finalize();
       const std::vector<CellID>& getBoundaryCells(StencilID stencilID) const;
       CellID* getCellNeighbourIDs(CellID cellID);
       std::vector<CellWeight>& getCellWeights();
-      MPI_Comm getComm() const;
-      void getDynamicUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,
-				  std::vector<ArraySizetype*>& sizeArrays,std::vector<std::string>& datatypes,
-				  std::vector<unsigned int>& byteSizes,std::vector<const char**>& pointers) const;
       const std::vector<CellID>& getExteriorCells();
       const std::vector<CellID>& getGlobalIDs() const;
       const std::vector<MPI_processID>& getHosts() const;
-      bool getInitialized() const;
       const std::vector<CellID>& getInnerCells(StencilID stencilID) const;
       const std::vector<CellID>& getInteriorCells();
       CellID getLocalID(CellID globalID) const;
@@ -92,23 +85,12 @@ namespace pargrid {
       const std::set<MPI_processID>& getNeighbourProcesses() const;
       CellID getNumberOfAllCells() const;
       CellID getNumberOfLocalCells() const;
-      std::size_t getNumberOfReceives(StencilID stencilID,MPI_processID hostID) const;
-      std::size_t getNumberOfSends(StencilID stencilID,MPI_processID hostsID) const;
-      MPI_processID getProcesses() const;
-      MPI_processID getRank() const;
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
       template<typename T> bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,T*& buffer) const;
-      void getStaticUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,std::vector<unsigned int>& elements,
-				 std::vector<std::string>& datatypes,std::vector<unsigned int>& byteSizes,std::vector<const char*>& pointers) const;
-      char* getUserData(DataID userDataID);
-      char* getUserData(const std::string& name);
       template<typename T> T* getUserDataStatic(DataID userDataID);
       template<typename T> T* getUserDataStatic(const std::string& name);
       template<typename T> DataWrapper<T> getUserDataDynamic(DataID userDataID);
       template<typename T> DataWrapper<T> getUserDataDynamic(const std::string& name);
-      unsigned int getUserDataElementSize(DataID userDataID) const;
-      bool getUserDatatype(DataID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
-      bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
       CellID invalid() const;
       CellID invalidCellID() const;
       DataID invalidDataID() const;
@@ -117,9 +99,38 @@ namespace pargrid {
       bool removeDataTransfer(DataID userDataID,StencilID stencilID);
       bool removeStencil(StencilID stencilID);
       bool removeUserData(DataID userDataID);
-      bool setPartitioningMode(PartitioningMode pm);
       bool startNeighbourExchange(StencilID stencilID,DataID userDataID);
       bool wait(StencilID stencilID,DataID userDataID);
+
+      // **************************************************** //
+      // ***** INTERFACE FOR MAIN PROGRAM USING PARGRID ***** //
+      // **************************************************** //
+      
+      bool addCell(CellID cellID,const std::vector<CellID>& nbrIDs,const std::vector<NeighbourID>& nbrTypes);
+      bool addCellFinished();
+      bool balanceLoad();
+      void barrier() const;
+      void clearCellWeights();
+      bool finalize();
+      MPI_Comm getComm() const;
+      void getDynamicUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,
+				  std::vector<ArraySizetype*>& sizeArrays,std::vector<std::string>& datatypes,
+				  std::vector<unsigned int>& byteSizes,std::vector<const char**>& pointers) const;
+      bool getInitialized() const;
+      std::size_t getNumberOfReceives(StencilID stencilID,MPI_processID hostID) const;
+      std::size_t getNumberOfSends(StencilID stencilID,MPI_processID hostsID) const;
+      MPI_processID getProcesses() const;
+      MPI_processID getRank() const;
+      const std::map<MPI_processID,std::set<CellID> >& getReceives(StencilID stencilID) const;
+      const std::map<MPI_processID,std::set<CellID> >& getSends(StencilID stencilID) const;
+      void getStaticUserDataInfo(std::vector<DataID>& dataIDs,std::vector<std::string>& names,std::vector<unsigned int>& elements,
+				 std::vector<std::string>& datatypes,std::vector<unsigned int>& byteSizes,std::vector<const char*>& pointers) const;
+      char* getUserData(DataID userDataID);
+      char* getUserData(const std::string& name);
+      unsigned int getUserDataElementSize(DataID userDataID) const;
+      bool getUserDatatype(DataID transferID,const std::set<CellID>& globalIDs,MPI_Datatype& datatype,bool reverseStencil);
+      bool initialize(MPI_Comm comm,const std::vector<std::map<InputParameter,std::string> >& parameters);
+      bool setPartitioningMode(PartitioningMode pm);
 
       // ***** ZOLTAN CALLBACK FUNCTION DECLARATIONS ***** //
 
@@ -167,7 +178,8 @@ namespace pargrid {
       std::vector<CellWeight> cellWeights;                                /**< Computational load of each local cell.*/
       bool cellWeightsUsed;                                               /**< If true, cell weights are calculated.*/
       std::vector<CellID> globalIDs;                                      /**< Global IDs of cells stored in this process.*/
-      std::vector<CellID> localIDs;                                       /**< Local IDs of cells stored in this process.*/
+      std::vector<CellID> localIDs;                                       /**< Local IDs of cells stored in this process. For remote cells 
+									   * this vector contains the local ID of that cell in the remote process.*/
       CellID N_localCells;                                                /**< Number of local cells on this process.*/
       CellID N_totalCells;                                                /**< Total number of cells (local+buffered) on this process.*/
       std::map<CellID,CellID> global2LocalMap;                            /**< Global-to-local ID mapping.*/
@@ -1462,6 +1474,26 @@ namespace pargrid {
    template<class C> inline
    MPI_processID ParGrid<C>::getRank() const {return myrank;}
 
+   /** Get lists of cells received from remote processes when using the given Stencil.
+    * @param stencilID ID of the Stencil.
+    * @return List of cells received from each neighbour process.*/
+   template<class C> inline
+   const std::map<MPI_processID,std::set<CellID> >& ParGrid<C>::getReceives(StencilID stencilID) const {
+      #ifndef NDEBUG
+         if (getInitialized() == false) exit(1);
+      #endif
+      
+      // Attemp to find the given Stencil:
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator stencil = stencils.find(stencilID);
+      #ifndef NDEBUG
+         if (stencil == stencils.end()) {
+	    std::cerr << "(PARGRID) ERROR: Could not find Stencil with ID#" << stencilID << " in getReceives!" << std::endl;
+	    exit(1);
+	 }
+      #endif
+      return stencil->second.getRecvs();
+   }
+   
    /** Get the remote neighbours of a given local cell.
     * @param localID Local ID of the cell.
     * @param nbrTypeIDs Searched neighours.
@@ -1505,6 +1537,26 @@ namespace pargrid {
       const bool rvalue = it->second.getRemoteUpdates(userDataID,offsets,ptr);
       buffer = reinterpret_cast<T*>(ptr);
       return rvalue;
+   }
+   
+   /** Get lists of cells sent to remote processes when using the given Stencil.
+    * @param stencilID ID of the Stencil.
+    * @return List of cells sent to each neighbour process.*/
+   template<class C> inline
+   const std::map<MPI_processID,std::set<CellID> >& ParGrid<C>::getSends(StencilID stencilID) const {
+      #ifndef NDEBUG
+         if (getInitialized() == false) exit(1);
+      #endif
+	
+      // Attemp to find the given Stencil:
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::const_iterator stencil = stencils.find(stencilID);
+      #ifndef NDEBUG
+         if (stencil == stencils.end()) {
+	    std::cerr << "(PARGRID) ERROR: Could not find Stencil with ID#" << stencilID << " in getSends!" << std::endl;
+	    exit(1);
+	 }
+      #endif
+      return stencil->second.getSends();
    }
 
    /** Get information on static user data arrays stored in ParGrid.

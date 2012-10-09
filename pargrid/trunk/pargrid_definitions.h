@@ -22,6 +22,13 @@
 #include <cstdlib>
 #include <stdint.h>
 #include <limits>
+#include <mpi.h>
+
+namespace MPITypes {
+   typedef int blocklength;                     /**< Datatype used by MPI in derived datatype blocklengths.*/
+   typedef MPI_Aint displacement;               /**< Datatype used by MPI in derived datatype displacements.*/
+   typedef int rank;                            /**< Datatype used by MPI to enumerate processes.*/
+} // namespace MPI_Type
 
 namespace pargrid {
    typedef float CellWeight;                        /**< Datatype Zoltan uses for cell and edge weights.*/
