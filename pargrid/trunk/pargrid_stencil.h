@@ -562,6 +562,7 @@ namespace pargrid {
       typename std::map<DataID,std::map<MPI_processID,TypeCache> >::iterator it = typeCachesUser.find(userDataID);
       typename std::map<DataID,TypeInfo>::iterator info = typeInfoUser.find(userDataID);
       if (it == typeCachesUser.end()) return false;
+      if (it->second.started == true) return false;
       if (info->second.typeVolatile == true) calcTypeCacheUser(userDataID);
       
       // Post sends and receives:
