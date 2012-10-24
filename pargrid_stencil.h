@@ -635,6 +635,7 @@ namespace pargrid {
       if (info == typeInfoUser.end()) return false;
       if (info->second.started == false) return false;
       MPI_Waitall(info->second.N_receives+info->second.N_sends,info->second.requests,MPI_STATUSES_IGNORE);
+      info->second.started = false;
       return true;
    }
       
