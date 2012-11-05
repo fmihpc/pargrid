@@ -219,6 +219,7 @@ namespace pargrid {
          int profDynamicDataMPI;
          int profDynamicDataOld;
          int profStencilRecalc;
+         int profZoltanCB;
       #endif
       
       bool checkInternalStructures() const;
@@ -293,6 +294,7 @@ namespace pargrid {
       
       #ifdef PROFILE
          profZoltanLB  = -1;
+         profZoltanCB  = -1;
          profParGridLB = -1;
          profMPI       = -1;
          profTotalLB   = -1;
@@ -2705,6 +2707,10 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getAllCellCoordinates(int N_globalIDs,int N_localIDs,int N_cellIDs,ZOLTAN_ID_PTR globalIDs,
 					  ZOLTAN_ID_PTR localIDs,int N_coords,double* geometryData,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       const double* coordinates = reinterpret_cast<double*>(getUserData(C::getCoordinateDataID()));
       for (int i=0; i<N_cellIDs; ++i) {
 	 geometryData[3*i+0] = coordinates[3*localIDs[i]+0];
@@ -2712,6 +2718,10 @@ namespace pargrid {
 	 geometryData[3*i+2] = coordinates[3*localIDs[i]+2];
       }
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
    
    /** Definition of Zoltan callback function ZOLTAN_GEOM_FN. This function is required by
@@ -2762,6 +2772,10 @@ namespace pargrid {
    void ParGrid<C>::getAllCellEdges(int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
 				    ZOLTAN_ID_PTR localIDs,int* N_edges,ZOLTAN_ID_PTR nbrGlobalIDs,int* nbrHosts,
 				    int N_weights,CellWeight* edgeWeights,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       size_t counter = 0;
       if (N_weights == 0) {
 	 // Edge weights are not calculated
@@ -2794,6 +2808,10 @@ namespace pargrid {
 	 }	 
       }
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
    
    /** Definition for Zoltan callback function ZOLTAN_EDGE_LIST_FN. This function is required
@@ -2900,6 +2918,10 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getHyperedges(int N_globalIDs,int N_vtxedges,int N_pins,int format,ZOLTAN_ID_PTR vtxedge_GID,
 				  int* vtxedge_ptr,ZOLTAN_ID_PTR pin_GID,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       // Check that correct hyperedge format is requested:
       if (format != ZOLTAN_COMPRESSED_VERTEX) {
 	 *rcode = ZOLTAN_FATAL;
@@ -2924,6 +2946,10 @@ namespace pargrid {
 	 }
       }
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
 
    /** Definition for Zoltan callback function ZOLTAN_HG_EDGE_WTS_FN. This is an optional function
@@ -2940,6 +2966,10 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getHyperedgeWeights(int N_globalIDs,int N_localIDs,int N_edges,int N_weights,
 					ZOLTAN_ID_PTR edgeGlobalID,ZOLTAN_ID_PTR edgeLocalID,CellWeight* edgeWeights,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       unsigned int counter = 0;
       
       if (edgeWeightsUsed == true) {
@@ -2955,6 +2985,9 @@ namespace pargrid {
 	 }
       }
       *rcode = ZOLTAN_OK;
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
 
    /** Definition for Zoltan callback function ZOLTAN_OBJ_LIST_FN. This function
@@ -2972,6 +3005,10 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getLocalCellList(int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalIDs,
 				     ZOLTAN_ID_PTR localIDs,int N_weights,CellWeight* cellWeights,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       #ifndef NDEBUG
          if (N_globalIDs != 1 || N_localIDs != 1) {
 	    std::cerr << "(PARGRID) ERROR: Incorrect number of global/local IDs!" << std::endl;
@@ -2998,6 +3035,10 @@ namespace pargrid {
 	 }
       }
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
  
    /** Definition for Zoltan callback function ZOLTAN_NUM_GEOM_FN. This function is
@@ -3083,6 +3124,10 @@ namespace pargrid {
     * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
    template<class C> inline
    void ParGrid<C>::getNumberOfHyperedges(int* N_lists,int* N_pins,int* format,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+
       *format = ZOLTAN_COMPRESSED_VERTEX;
       
       // Each local cell is a vertex:
@@ -3098,6 +3143,10 @@ namespace pargrid {
       }
       *N_pins = totalNumberOfPins;
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
    
    /** Definition for Zoltan callback function ZOLTAN_HG_SIZE_EDGE_WTS_FN. This is an optional function
