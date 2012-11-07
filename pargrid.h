@@ -2985,6 +2985,7 @@ namespace pargrid {
 	 }
       }
       *rcode = ZOLTAN_OK;
+      
       #ifdef PROFILE
          profile::stop();
       #endif
@@ -3014,24 +3015,27 @@ namespace pargrid {
 	    std::cerr << "(PARGRID) ERROR: Incorrect number of global/local IDs!" << std::endl;
 	    exit(1);
 	 }
+         for (CellID i=0; i<N_localCells; ++i) {
+	    if (this->cellWeights[i] < 0.0) {
+	       std::cerr << "(PARGRID) ERROR: Negative cell weight in LID#" << globalIDs[i];
+	       std::cerr << "\t GID#" << localIDs[i] << std::endl;
+	    }
+	 }      
       #endif
       
-      CellID counter = 0;
       if (N_weights == 1) {
 	 // Iterate over all local cells, and get the cell weights from user. This 
 	 // allows support for variable cell weights.
 	 for (CellID i=0; i<N_localCells; ++i) {
-	    globalIDs[counter]   = this->globalIDs[i];
-	    localIDs[counter]    = i;
-	    cellWeights[counter] = this->cellWeights[i];
-	    ++counter;
+	    globalIDs[i]   = this->globalIDs[i];
+	    localIDs[i]    = i;
+	    cellWeights[i] = this->cellWeights[i];
 	 }
       } else {
 	 // Iterate over all local cells and just copy global IDs to Zoltan structures:
 	 for (CellID i=0; i<N_localCells; ++i) {
-	    globalIDs[counter] = this->globalIDs[i];
-	    localIDs[counter]  = i;
-	    ++counter;
+	    globalIDs[i] = this->globalIDs[i];
+	    localIDs[i]  = i;
 	 }
       }
       *rcode = ZOLTAN_OK;
@@ -3068,6 +3072,10 @@ namespace pargrid {
    template<class C> inline
    void ParGrid<C>::getNumberOfAllEdges(int N_globalIDs,int N_localIDs,int N_cells,ZOLTAN_ID_PTR globalIDs,
 				       ZOLTAN_ID_PTR localIDs,int* N_edges,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       for (int i=0; i<N_cells; ++i) {
 	 const CellID localID = localIDs[i];
 	 int edgeSum = 0;
@@ -3078,6 +3086,10 @@ namespace pargrid {
 	 N_edges[i] = edgeSum;
       }
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
    
    /** Definition of Zoltan callback function ZOLTAN_NUM_EDGES_FN. This function is required
@@ -3093,6 +3105,10 @@ namespace pargrid {
    template<class C> inline
    int ParGrid<C>::getNumberOfEdges(int N_globalIDs,int N_localIDs,ZOLTAN_ID_PTR globalID,
 				    ZOLTAN_ID_PTR localID,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       // Count the number of neighbours the cell has:
       const CellID LID = localID[0];
       int edgeSum = 0;
@@ -3103,6 +3119,10 @@ namespace pargrid {
       
       // Return the number of edges:
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif      
       return edgeSum;
    }
    
@@ -3157,8 +3177,16 @@ namespace pargrid {
     * @param rcode The return code. Upon success should be ZOLTAN_OK.*/
    template<class C> inline
    void ParGrid<C>::getNumberOfHyperedgeWeights(int* N_edges,int* rcode) {
+      #ifdef PROFILE
+         profile::start("ParGrid callbacks",profZoltanCB);
+      #endif
+      
       *N_edges = N_localCells;
       *rcode = ZOLTAN_OK;
+      
+      #ifdef PROFILE
+         profile::stop();
+      #endif
    }
    
    /** Definition for Zoltan callback function ZOLTAN_NUM_OBJ_FN. This function
