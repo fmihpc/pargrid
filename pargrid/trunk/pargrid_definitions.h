@@ -65,7 +65,7 @@ namespace pargrid {
    const size_t N_neighbours = 27;                      /**< Number of neighbours reserved each parallel cell has (including the cell itself).*/
    const uint32_t ALL_NEIGHBOURS_EXIST = 134217728 - 1; /**< If a cell's neighbour flags field equals this value all its 
 							 * neighbours exist, i.e. the cell is an inner cell.*/
-   const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-10;      /**< Default cell weight (measures computational load).*/
+   const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-06;      /**< Default cell weight (measures computational load).*/
    const StencilID DEFAULT_STENCIL = 0;                 /**< ID of the default transfer Stencil. This Stencil always exists.*/
 
    const CellID INVALID_CELLID       = std::numeric_limits<CellID>::max();
