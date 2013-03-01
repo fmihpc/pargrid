@@ -24,6 +24,9 @@
 namespace pargrid {
 
    namespace buffermetadata {
+      /** Buffer class allocates extra elements in std::vector<uint32_t> Buffer<T>::blockSizes 
+       * that are used to exchange metadata between sender and receiver. This enumeration
+       * defines what those extra elements are.*/
       enum ExtraBlocks {
          N_ELEMENTS_TOTAL,                   /**< Total number of elements in buffer.*/
 	 N_ELEMENTS_FIRST,                   /**< Number of elements copied with first message.*/
@@ -47,7 +50,6 @@ namespace pargrid {
    class Buffer {
     public:
       Buffer();
-      //~Buffer();
 
       uint32_t* getBlockSizes();
       std::vector<T>& getBuffer();
@@ -71,15 +73,20 @@ namespace pargrid {
       bool copyOngoing;                               /**< If true, buffer contents are currently being copied.*/
       std::vector<T> dummyBuffer;                     /**< Empty buffer, it is returned by member functions if
 						       * buffer contents cannot be accessed at the time.*/
-      size_t N_copiedElements;
+      size_t N_copiedElements;                        /**< Number of elements that were actually copied. This 
+						       * is equal to or less than the current buffer size.*/
    };
    
+   /** Constructor for Buffer.*/
    template<typename T> inline
    Buffer<T>::Buffer() {
       copyOngoing = false;
       N_copiedElements = 0;
    }
-   
+
+   /** Get pointer to array containing number of elements in each message block.
+    * If buffer contents are currently being copied then a NULL pointer is returned.
+    * @return Array containing current number of elements in each message block.*/
    template<typename T> inline
    uint32_t* Buffer<T>::getBlockSizes() {
       // If buffer is being copied its contents cannot be read or written:
@@ -87,27 +94,47 @@ namespace pargrid {
       return &(this->blockSizes[0]);
    }
    
+   /** Get buffer where copied elements are stored. If buffer contents 
+    * are currently being copied then a vector of size zero is returned.
+    * @return Vector containing elements currently in buffer.*/
    template<typename T> inline
    std::vector<T>& Buffer<T>::getBuffer() {
       if (copyOngoing == true) return dummyBuffer;
       return buffer;
    }
 
+   /** Get a pointer to array containing elements currently in buffer.
+    * This function is used by CopyProtocol classes.
+    * @return Pointer to array used by std::vector<T> buffer.*/
    template<typename T> inline
    void* Buffer<T>::getBufferPointer() {return &(buffer[0]);}
 
+   /** Get number of elements in buffer. This function is used by CopyProtocol classes.
+    * @return Size of std::vector<T> buffer.*/
    template<typename T> inline
    size_t Buffer<T>::getBufferSize() const {return buffer.size();}
    
+   /** Get byte size of element stored in buffer. This function is used by CopyProtocol classes.
+    * @return Byte size of element, as given by sizeof function.*/
    template<typename T> inline
    size_t Buffer<T>::getElementByteSize() const {return sizeof(T);}
    
+   /** Get number of message blocks. This is the size of array 
+    * returned by Buffer::getBlockSizes().
+    * @return Number of message blocks.*/
    template<typename T> inline
    size_t Buffer<T>::getNumberOfBlocks() const {return blockSizes.size() - buffermetadata::SIZE;}
 
+   /** Get number of elements that were actually copied by CopyProtocol class.
+    * This is equal to or less than the size of vector returned by Buffer::getBuffer().
+    * @return Number of elements copied.*/
    template<typename T> inline
    size_t Buffer<T>::getNumberOfCopiedElements() const {return N_copiedElements;}
    
+   /** Change the amount of message blocks used by Buffer. This function
+    * fails if buffer contents are currently being copied.
+    * @param N_blocks New amount of message blocks.
+    * @return If true, amount of message blocks was successfully changed.*/
    template<typename T> inline
    bool Buffer<T>::resize(uint32_t N_blocks) {
       // Buffer cannot be changed if its contents are being copied:
@@ -123,13 +150,21 @@ namespace pargrid {
       return true;
    }
 
+   /** Change the size of buffer, calls std::vector<T> Buffer<T>::buffer.resize function.
+    * This function is used by CopyProtocol classes. This function will fail if 
+    * buffer contents are currently being copied.
+    * @param newSize New buffer size.
+    * @return If true, buffer size was successfully changed.*/
    template<typename T> inline
    bool Buffer<T>::setBufferSize(size_t newSize) {
       if (copyOngoing == true) return false;
       buffer.resize(newSize);
       return true;
    }
-   
+
+   /** Set buffer state. This function is used by CopyProtocol classes.
+    * @param copyOngoing If true, buffer contents are being copied.
+    * @param N_copiedElements Number of elements that were copied.*/
    template<typename T> inline
    void Buffer<T>::setState(bool copyOngoing,size_t N_copiedElements) {
       this->copyOngoing = copyOngoing;
