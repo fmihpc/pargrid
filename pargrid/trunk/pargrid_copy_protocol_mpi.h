@@ -22,17 +22,21 @@
 namespace pargrid {
 
    namespace mpiprotocol {
-      const Real BUFFER_INCREMENT_FACTOR = 1.2;
-      const size_t INITIAL_BUFFER_SIZE = 1;
+      const Real BUFFER_INCREMENT_FACTOR = 1.2;       /**< If receiving buffer is too small, it is resized to 
+						       * total number of copied elements times this factor.*/
+      const size_t INITIAL_BUFFER_SIZE = 1;           /**< Initial size of receiving buffer.*/
       
+      /** MPI tags used by CopyProtocolMPI class.*/
       enum tags {
-	 BLOCK_SIZES,
-	 BUFFER_1ST_COPY,
-	 BUFFER_2ND_COPY,
-	 SIZE
+	 BLOCK_SIZES,                                 /**< Message used to copy Buffer<T>::blockSizes vector.*/
+	 BUFFER_1ST_COPY,                             /**< First message used to copy Buffer<T>::buffer data.*/
+	 BUFFER_2ND_COPY,                             /**< Second message used to copy Buffer<T>::buffer data.*/
+	 SIZE                                         /**< Total amount of MPI tags used by CopyProtocolMPI class.*/
       };
    }
-   
+
+   /** Class CopyProtocolMPI copies data between two pargrid::Buffer classes over MPI.
+    * Class given as template parameter is the buffer class this CopyProtocolMPI should use.*/
    template<class BUFFER>
    class CopyProtocolMPI {
     public:
@@ -61,23 +65,37 @@ namespace pargrid {
       
       pargrid::MPI_processID test; // TEST
    };
-   
+
+   /** Constructor for class CopyProtocolMPI. Calls invalidate().
+    * You need to call the following member functions before CopyProtocolMPI 
+    * can be used: CopyProtocolMPI<BUFFER>::set.
+    * @see CopyProtocolMPI<BUFFER>::set.*/
    template<class BUFFER> inline
    CopyProtocolMPI<BUFFER>::CopyProtocolMPI() {
       invalidate();
    }
    
+   /** Copy-constructor for class CopyProtocolMPI. Calls invalidate().
+    * This needs to be done in order to set MPI-related member variables to 
+    * correct NULL states. Note that copy-constructor does not actually make a 
+    * copy of the given class.
+    * @param cp CopyProtocolMPI class to be copied.*/
    template<class BUFFER> inline
    CopyProtocolMPI<BUFFER>::CopyProtocolMPI(const CopyProtocolMPI<BUFFER>& cp) {
       invalidate();
    }
-   
+
+   /** Destructor for class CopyProtocolMPI(). Calls invalidate() to 
+    * cleanly deallocate MPI-related variables.*/
    template<class BUFFER> inline
    CopyProtocolMPI<BUFFER>::~CopyProtocolMPI() {
       transferStarted = false;
       clear();
    }
    
+   /** Reset class state to invalid. This function will deallocate all MPI-related variables.
+    * This function will fail if CopyProtocolMPI is currently copying buffer contents.
+    * @return If true, CopyProtocolMPI was successfully set to invalid state.*/
    template<class BUFFER> inline
    bool CopyProtocolMPI<BUFFER>::clear() {
       if (transferStarted == true) return false;
@@ -94,6 +112,9 @@ namespace pargrid {
       return true;
    }
 
+   /** Invalidate CopyProtocolMPI class. Difference between this function and 
+    * CopyProtocolMPI<BUFFER>::clear is that this function will not deallocate 
+    * MPI-related variables.*/
    template<class BUFFER> inline
    void CopyProtocolMPI<BUFFER>::invalidate() {
       buffer = NULL;
@@ -106,6 +127,15 @@ namespace pargrid {
       transferStarted = false;
    }
    
+   /** Pair CopyProtocolMPI with another instance of class and set the buffer to be copied.
+    * You need to call this function on sending and receiving process to prevent
+    * CopyProtocolMPI<BUFFER>::start and CopyProtocolMPI<BUFFER>::wait from deadlocking.
+    * This function will fail if CopyProtocolMPI is currently copying buffer contents.
+    * @param buffer Pointer to buffer used in data copy.
+    * @param sender If true, then this CopyProtocolMPI is sending data instead of receiving.
+    * @param comm MPI communicator to use.
+    * @param partnerRank MPI rank of partner CopyProtocolMPI class within the given communicator.
+    * @return If true, CopyProtocolMPI was successfully paired with another instance of class.*/
    template<class BUFFER> inline
    bool CopyProtocolMPI<BUFFER>::set(BUFFER* buffer,bool sender,MPI_Comm comm,pargrid::MPI_processID partnerRank) {
       // Cannot set new state if a buffer copy is in progress:
@@ -152,19 +182,25 @@ namespace pargrid {
       setCalled = true;
       return success;
    }
-   
+
+   /** Start data copy between two buffers. This function will fail if CopyProtocolMPI<BUFFER>::set 
+    * has not been called, or if CopyProtocolMPI is already copying data. Note that buffer 
+    * contents are invalid until CopyProtocolMPI<BUFFER>::wait has been successfully called.
+    * @return If true, data copy was successfully started.
+    * @see CopyProtocolMPI<BUFFER>::wait.*/
    template<class BUFFER> inline
    bool CopyProtocolMPI<BUFFER>::start() {
       if (setCalled == false) return false;
       if (transferStarted == true) return false;
       
-      const size_t N = buffer->getNumberOfBlocks();
-      uint32_t* blockSizes = buffer->getBlockSizes();
-      char* bufferPointer = reinterpret_cast<char*>(buffer->getBufferPointer());
+      const size_t N          = buffer->getNumberOfBlocks();
+      uint32_t* blockSizes    = buffer->getBlockSizes();
+      char* bufferPointer     = reinterpret_cast<char*>(buffer->getBufferPointer());
       const size_t bufferSize = buffer->getBufferSize();
       
       if (sender == true) {
-
+	 // Receiver may not have sufficient capacity to receive all elements.
+	 // Compute how many elements we can send with the first message:
 	 const size_t N_total = bufferSize;
 	 size_t N_firstMessage = 0;
 	 size_t N_secondMessage = 0;
@@ -177,21 +213,24 @@ namespace pargrid {
 	 }
 	 
 	 // Write total number of copied elements, and number of
-	 // elements copied with first message, to buffer:
+	 // elements copied with first message, to end of array blockSizes:
 	 blockSizes[N+pargrid::buffermetadata::N_ELEMENTS_TOTAL] = N_total;
 	 blockSizes[N+pargrid::buffermetadata::N_ELEMENTS_FIRST] = N_firstMessage;
 
+	 // Send blockSizes array and first batch of buffer elements:
 	 MPI_Isend(blockSizes,N+pargrid::buffermetadata::SIZE,MPI_Type<uint32_t>(),partnerRank,pargrid::mpiprotocol::BLOCK_SIZES,comm,&(requests[0]));
 	 MPI_Isend(bufferPointer,N_firstMessage,datatype,partnerRank,pargrid::mpiprotocol::BUFFER_1ST_COPY,comm,&(requests[1]));
-	 
+
+	 // If receiving buffer does not have capacity to receive all elements with 
+	 // a single message, send the rest of elements with a second message and 
+	 // increase perceived partner buffer capacity:
 	 if (N_secondMessage > 0) {
 	    const size_t elementByteSize = buffer->getElementByteSize();
 	    MPI_Isend(bufferPointer+elementByteSize*N_firstMessage,N_secondMessage,datatype,partnerRank,pargrid::mpiprotocol::BUFFER_2ND_COPY,comm,&(requests[2]));
-	    
-	    // Increase perceived partner buffer size:
 	    partnerBufferSize = static_cast<size_t>(floor(N_total*pargrid::mpiprotocol::BUFFER_INCREMENT_FACTOR));
 	 }	 
       } else {
+	 // Post receives for blockSizes array, and at most bufferSize elements:
 	 MPI_Irecv(blockSizes,N+pargrid::buffermetadata::SIZE,MPI_Type<uint32_t>(),partnerRank,pargrid::mpiprotocol::BLOCK_SIZES,comm,&(requests[0]));
 	 MPI_Irecv(bufferPointer,bufferSize,datatype,partnerRank,pargrid::mpiprotocol::BUFFER_1ST_COPY,comm,&(requests[1]));
       }
@@ -201,28 +240,39 @@ namespace pargrid {
       transferStarted = true;
       return true;
    }
-   
+
+   /** Wait until buffer contents have been copied. This function will fail 
+    * if CopyProtocolMPI<BUFFER>::start has not been called prior to calling
+    * this function.
+    * @return If true, buffer contents were successfully copied.*/
    template<class BUFFER> inline
    bool CopyProtocolMPI<BUFFER>::wait() {
       if (transferStarted == false) return false;
 
+      // Wait for MPI copies to finish:
       MPI_Waitall(3,requests,MPI_STATUSES_IGNORE);
-      buffer->setState(false,0); // FIXME
       
-      if (sender == false) { // FIXME
+      // Unlock buffer:
+      buffer->setState(false,0); // FIXME
+
+      if (sender == false) {
+	 // Check if we were able to receive all buffer elements with the first message.
+	 // If not, increase buffer capacity and post receive for rest of data:
 	 const size_t N          = buffer->getNumberOfBlocks();
 	 uint32_t* blockSizes    = buffer->getBlockSizes();
 	 const size_t bufferSize = buffer->getBufferSize();
 
+	 // Total number of copied elements:
 	 const size_t N_total        = blockSizes[N+pargrid::buffermetadata::N_ELEMENTS_TOTAL];
+	 // Number of elements copied with first message:
 	 const size_t N_firstMessage = blockSizes[N+pargrid::buffermetadata::N_ELEMENTS_FIRST];
 
-	 if (N_total > bufferSize) { // FIXME
+	 if (N_total > bufferSize) {
 	    // Increase buffer size:
 	    const size_t newSize = static_cast<size_t>(floor(N_total*pargrid::mpiprotocol::BUFFER_INCREMENT_FACTOR));
 	    buffer->setBufferSize(newSize);
 	    
-	    // Receive rest of elements:
+	    // Receive elements that did not fit into first message:
 	    const size_t N_secondMessage = N_total - N_firstMessage;
 	    char* bufferPointer = reinterpret_cast<char*>(buffer->getBufferPointer());
 	    const size_t elementByteSize = buffer->getElementByteSize();
@@ -230,7 +280,7 @@ namespace pargrid {
 	    MPI_Waitall(3,requests,MPI_STATUSES_IGNORE);
 	 }
 
-	 buffer->setState(false,N_total); // FIXME
+	 buffer->setState(false,N_total);
       }
       transferStarted = false;
       return true;
