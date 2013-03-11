@@ -19,10 +19,13 @@
 #ifndef PARGRID_COPY_PROTOCOL_MPI_H
 #define PARGRID_COPY_PROTOCOL_MPI_H
 
+#include <cmath>
+#include "mpiconversion.h"
+
 namespace pargrid {
 
    namespace mpiprotocol {
-      const Real BUFFER_INCREMENT_FACTOR = 1.2;       /**< If receiving buffer is too small, it is resized to 
+      const double BUFFER_INCREMENT_FACTOR = 1.2;     /**< If receiving buffer is too small, it is resized to 
 						       * total number of copied elements times this factor.*/
       const size_t INITIAL_BUFFER_SIZE = 1;           /**< Initial size of receiving buffer.*/
       

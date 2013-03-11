@@ -19,6 +19,7 @@
 #ifndef PARGRID_BUFFERS_H
 #define PARGRID_BUFFERS_H
 
+#include <vector>
 #include "pargrid_definitions.h"
 
 namespace pargrid {
