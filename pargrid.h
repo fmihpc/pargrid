@@ -87,8 +87,10 @@ namespace pargrid {
       CellID getNumberOfLocalCells() const;
       bool getRemoteNeighbours(CellID cellID,const std::vector<NeighbourID>& nbrTypeIDs,std::vector<CellID>& nbrIDs);
       template<typename T> bool getRemoteUpdates(StencilID stencilID,DataID userDataID,unsigned int*& offsets,T*& buffer) const;
+      DataID getUserDataID(const std::string& name,bool& isDynamic) const;
       template<typename T> T* getUserDataStatic(DataID userDataID);
       template<typename T> T* getUserDataStatic(const std::string& name);
+      std::size_t getUserDataStaticElements(DataID userDataID) const;
       template<typename T> DataWrapper<T> getUserDataDynamic(DataID userDataID);
       template<typename T> DataWrapper<T> getUserDataDynamic(const std::string& name);
       CellID invalid() const;
@@ -1615,6 +1617,46 @@ namespace pargrid {
       return NULL;
    }
    
+   /** Get number of elements in static user data array. Number of elements is the 
+    * value of N_elements parameter given in addUserData function.
+    * @param userDataID DataID of the array.
+    * @return Number of elements in given array. Zero value is returned if the array does not exist.
+    * @see addUserData.*/
+   template<class C> inline
+   std::size_t ParGrid<C>::getUserDataStaticElements(DataID userDataID) const {
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator staticIt = userDataStatic.find(userDataID);
+      if (staticIt != userDataStatic.end()) return staticIt->second->N_elements;
+      return 0;
+   }
+   
+   /** Get DataID of given user data array.
+    * @param name Name of the static or dynamic user data array.
+    * @param isDynamic If user data array is dynamic, this variable will be set to value true.
+    * @return DataID of the array, or pargrid::INVALID_DATAID, if a user data array
+    * with given name does not exist.*/
+   template<class C> inline
+   DataID ParGrid<C>::getUserDataID(const std::string& name,bool& isDynamic) const {
+      // Search static arrays for given name:
+      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
+	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
+	 if (it->second->getName() == name) {
+	    isDynamic = false;
+	    return it->first;
+	 }
+      }
+      
+      // Search dynamic arrays for given name:
+      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator 
+	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
+	 if (it->second->getName() == name) {
+	    isDynamic = true;
+	    return it->first;
+	 }
+      }
+      
+      return INVALID_DATAID;
+   }
+   
    /** Get pointer to user-defined data array.
     * @param userDataID ID number of the array, as returned by addUserData.
     * @return Pointer to array or NULL if an array with given ID does not exist.
@@ -1645,7 +1687,7 @@ namespace pargrid {
     * @return Wrapper to array.*/
    template<class C> template<typename T> inline
    DataWrapper<T> ParGrid<C>::getUserDataDynamic(DataID userDataID) {
-      typename std::map<DataID,UserDataDynamic<ParGrid>*>::iterator it = userDataDynamic.find(userDataID);
+      typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator it = userDataDynamic.find(userDataID);
       
       // If dynamic data array with given ID does not exist,
       // return an invalid DataWrapper:
@@ -1667,7 +1709,7 @@ namespace pargrid {
    template<class C> template<typename T> inline
    DataWrapper<T> ParGrid<C>::getUserDataDynamic(const std::string& name) {
       // Iterate over all dynamic user data and search for the given name:
-      typename std::map<DataID,UserDataDynamic<ParGrid>*>::iterator it;
+      typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator it;
       for (it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
 	 if (it->second->getName() == name) {
 	    return DataWrapper<T>(it->second->getArrayPointer(),
