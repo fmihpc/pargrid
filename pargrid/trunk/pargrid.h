@@ -1663,10 +1663,9 @@ namespace pargrid {
     * @see addUserData.*/
    template<class C> template<typename T> inline
    T* ParGrid<C>::getUserDataStatic(DataID userDataID) {
-      #ifndef NDEBUG
-         if (userDataStatic.find(userDataID) == userDataStatic.end()) return NULL;
-      #endif
-      return reinterpret_cast<T*>(userDataStatic[userDataID]->array);
+      typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator it = userDataStatic.find(userDataID);
+      if (it == userDataStatic.end()) return NULL;
+      return reinterpret_cast<T*>(it->second->array);
    }
    
    /** Get pointer to user-defined data array.

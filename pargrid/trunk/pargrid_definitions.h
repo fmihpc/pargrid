@@ -37,7 +37,7 @@ namespace pargrid {
    typedef int MPI_processID;                       /**< Datatype MPI uses for process IDs.*/
    typedef unsigned char NeighbourID;               /**< Datatype ParGrid uses for neighbour type IDs.*/
    typedef unsigned int StencilID;                  /**< Datatype ParGrid uses for stencil IDs.*/
-   typedef long unsigned int DataID;                     /**< Datatype ParGrid uses for user-defined array IDs.*/
+   typedef unsigned int DataID;                     /**< Datatype ParGrid uses for user-defined array IDs.*/
    
    enum InputParameter {
       cellWeightScale,                              /**< Value used for cell weights.*/
@@ -68,9 +68,12 @@ namespace pargrid {
    const CellWeight DEFAULT_CELL_WEIGHT = 1.0e-06;      /**< Default cell weight (measures computational load).*/
    const StencilID DEFAULT_STENCIL = 0;                 /**< ID of the default transfer Stencil. This Stencil always exists.*/
 
-   const CellID INVALID_CELLID       = std::numeric_limits<CellID>::max();
-   const DataID INVALID_DATAID       = std::numeric_limits<DataID>::max();
-   const StencilID INVALID_STENCILID = std::numeric_limits<StencilID>::max();
+   const CellID INVALID_CELLID       = std::numeric_limits<pargrid::CellID>::max();
+   const DataID INVALID_DATAID       = std::numeric_limits<pargrid::DataID>::max();
+   const StencilID INVALID_STENCILID = std::numeric_limits<pargrid::StencilID>::max();
+
+   template<typename T> inline
+   T getInvalidID() {return std::numeric_limits<T>::max();}
    
 } // namespace pargrid
    
