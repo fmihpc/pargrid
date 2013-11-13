@@ -1,4 +1,13 @@
 *************************************
+***** CHANGES IN REVISION 00618 *****
+*************************************
+
+Added a new function that can be used to check that all processes
+have succeeded in doing something. Each process calls it with their
+local true/false values, and the function returns true only if all
+processes called it with value true.
+
+*************************************
 ***** CHANGES IN REVISION 00286 *****
 *************************************
 
