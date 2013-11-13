@@ -70,6 +70,7 @@ namespace pargrid {
       void calcNeighbourOffsets(NeighbourID nbrTypeID,int& i_off,int& j_off,int& k_off) const;
       NeighbourID calcNeighbourTypeID(int i_off,int j_off,int k_off) const;
       bool checkPartitioningStatus(int& counter) const;
+      bool checkSuccess(const bool& value) const;
       const std::vector<CellID>& getBoundaryCells(StencilID stencilID) const;
       CellID* getCellNeighbourIDs(CellID cellID);
       std::vector<CellWeight>& getCellWeights();
@@ -1206,6 +1207,23 @@ namespace pargrid {
       counter = partitioningCounter;
       return rvalue;
    }
+
+   /** Helper function for checking success or failure of simulation. Each process
+    * must call this function simultaneously with their own success status as 
+    * parameter. Value 'true' is returned if and only if all processes called 
+    * this function with status 'true'.
+    * @param status Success status of this process.
+    * @return If true, all processes have success status true.*/
+   template<class C> inline
+   bool ParGrid<C>::checkSuccess(const bool& status) const {
+      int32_t mySuccess = 0;
+      int32_t globalSuccess = 0;
+      if (status == false) mySuccess = 1;
+      MPI_Reduce(&mySuccess,&globalSuccess,1,MPI_Type<int32_t>(),MPI_SUM,0,comm);
+      MPI_Bcast(&globalSuccess,1,MPI_Type<int32_t>(),0,comm);
+      if (globalSuccess == 0) return true;
+      return false;
+   }
    
    /** Set contents of cell weight array to default value.*/
    template<class C> inline
@@ -1388,7 +1406,6 @@ namespace pargrid {
       #ifndef NDEBUG
          if (it == global2LocalMap.end()) {
 	    std::cerr << "(PARGRID) ERROR: In getLocalID, cell with global ID#" << globalID << " does not exist on P#" << myrank << std::endl;
-	    exit(1);
 	 }
       #endif
       if (it == global2LocalMap.end()) return invalidCellID();
