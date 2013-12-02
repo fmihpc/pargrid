@@ -19,6 +19,7 @@
 #ifndef PARGRID_STENCIL_H
 #define PARGRID_STENCIL_H
 
+#include <time.h>
 #include <map>
 #include <set>
 #include <vector>
@@ -51,6 +52,7 @@ namespace pargrid {
       bool startTransfer(DataID userDataID);
       bool update();
       bool wait(DataID userDataID);
+      bool wait(DataID userDataID,const std::string& name);
       
     private:
       /** Wrapper for MPI_Datatype. This was created to make copying and deletion of
@@ -121,6 +123,7 @@ namespace pargrid {
       bool calcTypeCacheStatic(DataID userDataID,TypeInfo& info);
       bool startStaticTransfer(DataID userDataID);
       bool waitStatic(DataID userDataID);
+      bool waitStatic(DataID userDataID,const std::string& name);
    };
          
    // ************************************************** //
@@ -628,6 +631,11 @@ namespace pargrid {
    bool Stencil<PARGRID,C>::wait(DataID userDataID) {
       return waitStatic(userDataID);
    }
+   
+   template<class PARGRID,class C> inline
+   bool Stencil<PARGRID,C>::wait(DataID userDataID,const std::string& name) {
+      return waitStatic(userDataID,name);
+   }
 
    template<class PARGRID,class C> inline
    bool Stencil<PARGRID,C>::waitStatic(DataID userDataID) {
@@ -635,6 +643,33 @@ namespace pargrid {
       if (info == typeInfoUser.end()) return false;
       if (info->second.started == false) return false;
       MPI_Waitall(info->second.N_receives+info->second.N_sends,info->second.requests,MPI_STATUSES_IGNORE);
+      info->second.started = false;
+      return true;
+   }
+   
+   template<class PARGRID,class C> inline
+   bool Stencil<PARGRID,C>::waitStatic(DataID userDataID,const std::string& name) {
+      typename std::map<DataID,TypeInfo>::iterator info = typeInfoUser.find(userDataID);
+      if (info == typeInfoUser.end()) return false;
+      if (info->second.started == false) return false;
+      
+      int flag = false;
+      uint64_t waitTime      = 10000;
+      uint64_t waitedTime    = 0;
+      uint64_t maxWaitedTime = 5000000000;
+      timespec timeSpec;
+      timeSpec.tv_sec  = 0;
+      timeSpec.tv_nsec = waitTime;
+      do {
+	 MPI_Testall(info->second.N_receives+info->second.N_sends,info->second.requests,&flag,MPI_STATUSES_IGNORE);
+	 nanosleep(&timeSpec,NULL);
+	 waitedTime += waitTime;
+	 if (waitedTime >= maxWaitedTime) {
+	    std::cerr << "Killing execution in ParGrid::Stencil::waitStatic with name '" << name << "'" << std::endl;
+	    exit(1);
+	 }
+      } while (flag == false);
+
       info->second.started = false;
       return true;
    }

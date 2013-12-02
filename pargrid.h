@@ -104,7 +104,8 @@ namespace pargrid {
       bool removeUserData(DataID userDataID);
       bool startNeighbourExchange(StencilID stencilID,DataID userDataID);
       bool wait(StencilID stencilID,DataID userDataID);
-
+      bool wait(StencilID stencilID,DataID userDataID,const std::string& name);
+      
       // **************************************************** //
       // ***** INTERFACE FOR MAIN PROGRAM USING PARGRID ***** //
       // **************************************************** //
@@ -2738,7 +2739,29 @@ namespace pargrid {
       if (sten == stencils.end()) return false;
       return sten->second.wait(userDataID);
    }
-   
+
+   /** Wait for remote cell data synchronization to complete. If -DNDEBUG compiler flag 
+    * is not defined, this function will
+    * kill simulation execution if any process waits too long for data syncs to 
+    * complete, printing error message with the given label. This is intented to 
+    * be used for debbugging purposes. If -DNDEBUG compiler flag is defined, 
+    * this function behaves similar to the other ParGrid::wait.
+    * @param stencilID ID of the stencil.
+    * @param transferID ID of the transfer.
+    * @param name Label for the wait.
+    * @return If true, data synchronization completed successfully.*/
+   template<class C> inline
+   bool ParGrid<C>::wait(StencilID stencilID,DataID userDataID,const std::string& name) {
+      if (getInitialized() == false) return false;
+      typename std::map<StencilID,Stencil<ParGrid<C>,C > >::iterator sten = stencils.find(stencilID);
+      if (sten == stencils.end()) return false;
+      #ifndef NDEBUG
+         return sten->second.wait(userDataID,name);
+      #else
+         return sten->second.wait(userDataID);
+      #endif
+   }
+
    template<class C> inline
    void ParGrid<C>::waitMetadataRepartitioning(std::vector<MPI_Request>& nbrRecvRequests,
 					       std::vector<MPI_Request>& nbrSendRequests) {

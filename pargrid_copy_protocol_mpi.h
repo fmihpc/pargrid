@@ -50,7 +50,7 @@ namespace pargrid {
       bool clear();
       bool set(BUFFER* buffer,bool sender,MPI_Comm comm,pargrid::MPI_processID);
       bool start();
-      bool wait();
+      bool wait(const std::string& name);
       
     protected:
       BUFFER* buffer;                          /**< BUFFER that is used in data copy.*/
@@ -249,11 +249,31 @@ namespace pargrid {
     * this function.
     * @return If true, buffer contents were successfully copied.*/
    template<class BUFFER> inline
-   bool CopyProtocolMPI<BUFFER>::wait() {
+   bool CopyProtocolMPI<BUFFER>::wait(const std::string& name = "") {
       if (transferStarted == false) return false;
 
       // Wait for MPI copies to finish:
-      MPI_Waitall(3,requests,MPI_STATUSES_IGNORE);
+      #ifndef NDEBUG
+         int flag = false;
+         uint64_t waitTime      = 10000;
+         uint64_t waitedTime    = 0;
+         uint64_t maxWaitedTime = 5000000000;
+         timespec timeSpec;
+         timeSpec.tv_sec  = 0;
+         timeSpec.tv_nsec = waitTime;
+         do {
+	    MPI_Testall(3,requests,&flag,MPI_STATUSES_IGNORE);
+	    nanosleep(&timeSpec,NULL);
+	    waitedTime += waitTime;
+	    if (flag == true) break;
+	    if (waitedTime >= maxWaitedTime) {
+	       std::cerr << "Killing execution in ParGrid::CopyProtocolMPI with name '" << name << "'" << std::endl;
+	       exit(1);
+	    }
+	 } while(true);
+      #else
+         MPI_Waitall(3,requests,MPI_STATUSES_IGNORE);
+      #endif
       
       // Unlock buffer:
       buffer->setState(false,0); // FIXME
