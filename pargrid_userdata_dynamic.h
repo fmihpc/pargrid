@@ -1,3 +1,21 @@
+/** This file is part of ParGrid parallel grid.
+ *
+ *  Copyright 2011-2014 Finnish Meteorological Institute
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #ifndef PARGRID_USERDATA_DYNAMIC_H
 #define PARGRID_USERDATA_DYNAMIC_H
 
@@ -33,6 +51,7 @@ namespace pargrid {
       ArraySizetype* getSizePointer() const;
       void initialize(PARGRID* pargrid,const std::string& name,CellID N_cells,unsigned int elementByteSize,const std::string& datatype);
       void reallocate(CellID start,CellID end);
+      void swap(UserDataDynamic& udd);
       
     private:
       char** arrays;                 /**< Arrays containing data for each cell.*/
@@ -211,6 +230,44 @@ namespace pargrid {
 	    arrays[cell] = new char[elementByteSize*capacities[cell]];
 	 }
       }
+   }
+
+   /** Swap the contents of two dynamic user data arrays.
+    * @param udd Dynamic user data array whose contents are to be swapped with.*/
+   template<class PARGRID> inline
+   void UserDataDynamic<PARGRID>::swap(UserDataDynamic& udd) {
+      // Make dummy copies of member variables:
+      char** dummyArrays                       = arrays;
+      ArraySizetype* dummyCapacities           = capacities;
+      const std::string dummyDatatype          = datatype;
+      const ArraySizetype dummyElementByteSize = elementByteSize;
+      const std::string dummyName              = name;
+      const CellID dummy_N_cells               = N_cells;
+      ArraySizetype* dummySizes                = sizes;
+
+      // Set the contents of this container:
+      arrays = udd.arrays;
+      capacities = udd.capacities;
+      datatype = udd.datatype;
+      elementByteSize = udd.elementByteSize;
+      name = udd.name;
+      N_cells = udd.N_cells;
+      sizes = udd.sizes;
+      MPI_Type_free(&basicDatatype);
+      MPI_Type_contiguous(elementByteSize,MPI_Type<char>(),&basicDatatype);
+      MPI_Type_commit(&basicDatatype);
+
+      // Set the contents of the other container:
+      udd.arrays = dummyArrays;
+      udd.capacities = dummyCapacities;
+      udd.datatype = dummyDatatype;
+      udd.elementByteSize = dummyElementByteSize;
+      udd.name = dummyName;
+      udd.N_cells = dummy_N_cells;
+      udd.sizes = dummySizes;
+      MPI_Type_free(&udd.basicDatatype);
+      MPI_Type_contiguous(udd.elementByteSize,MPI_Type<char>(),&udd.basicDatatype);
+      MPI_Type_commit(&udd.basicDatatype);
    }
    
 } // namespace pargrid
