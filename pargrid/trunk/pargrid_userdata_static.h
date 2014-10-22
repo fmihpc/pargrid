@@ -1,6 +1,6 @@
 /** This file is part of ParGrid parallel grid.
  * 
- *  Copyright 2011, 2012 Finnish Meteorological Institute
+ *  Copyright 2011-2014 Finnish Meteorological Institute
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU Lesser General Public License as published by
@@ -50,6 +50,7 @@ namespace pargrid {
       const std::string& getName() const;
       void initialize(PARGRID* pargrid,const std::string& name,size_t N_cells,unsigned int elements,
 		      unsigned int byteSize,const std::string& datatype);
+      void swap(UserDataStatic& uds);
       
       char* array;                   /**< Pointer to array containing the data.*/
       std::string name;              /**< Name of the array.*/
@@ -169,6 +170,41 @@ namespace pargrid {
       MPI_Type_commit(&basicDatatype);
    }
    
+   /** Swap the contents of two UserDataStatic containers.
+    * @param uds UserDataStatic container to be swapped with.*/
+   template<class PARGRID> inline
+   void UserDataStatic<PARGRID>::swap(UserDataStatic& uds) {
+      // Make dummy copies of member variables:
+      char* dummyArray = array;
+      const std::string dummyName = name;
+      const unsigned int dummyByteSize = byteSize;
+      const std::string dummyDatatype = datatype;
+      const unsigned int dummy_N_cells = N_cells;
+      const unsigned int dummy_N_elements = N_elements;
+
+      // Set the contents of this UserDataStatic:
+      array = uds.array;
+      name = uds.name;
+      byteSize = uds.byteSize;
+      datatype = uds.datatype;
+      N_cells = uds.N_cells;
+      N_elements = uds.N_elements;
+      MPI_Type_free(&basicDatatype);
+      MPI_Type_contiguous(N_elements*byteSize,MPI_Type<char>(),&basicDatatype);
+      MPI_Type_commit(&basicDatatype);
+      
+      // Set the contents ot the other UserDataStatic:
+      uds.array = dummyArray;
+      uds.name = dummyName;
+      uds.byteSize = dummyByteSize;
+      uds.datatype = dummyDatatype;
+      uds.N_cells = dummy_N_cells;
+      uds.N_elements = dummy_N_elements;
+      MPI_Type_free(&uds.basicDatatype);
+      MPI_Type_contiguous(uds.N_elements*uds.byteSize,MPI_Type<char>(),&uds.basicDatatype);
+      MPI_Type_commit(&uds.basicDatatype);
+   }
+
 } // namespace pargrid
 
 #endif

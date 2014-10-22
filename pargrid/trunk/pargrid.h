@@ -218,10 +218,8 @@ namespace pargrid {
          int profParGridLB;
          int profMPI;
          int profTotalLB;
-         int profUserData;
+         int profStaticData;
          int profDynamicData;
-         int profDynamicDataMPI;
-         int profDynamicDataOld;
          int profStencilRecalc;
          int profZoltanCB;
       #endif
@@ -234,12 +232,14 @@ namespace pargrid {
 				       std::map<MPI_processID,std::vector<int> >& exportDisplacements,
 				       std::vector<CellID>& newCellNeighbours);
       bool repartitionUserDataStatic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
-				     const std::map<MPI_processID,unsigned int>& importsPerProcess,int N_export,
-				     int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs);
+				     const std::map<MPI_processID,std::vector<int> >& importDisplacements,
+				     int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+				     const std::map<MPI_processID,std::vector<int> >& exportDisplacements);
+
       bool repartitionUserDataDynamic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
-				      std::map<MPI_processID,std::vector<int> >& importDisplacements,int N_export,
-				      int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
-				      std::map<MPI_processID,std::vector<int> >& exportDisplacements);
+				      const std::map<MPI_processID,std::vector<int> >& importDisplacements,
+				      int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+				      const std::map<MPI_processID,std::vector<int> >& exportDisplacements);
       bool syncCellHosts();
       bool syncLocalIDs();
       void waitMetadataRepartitioning(std::vector<MPI_Request>& recvRequests,std::vector<MPI_Request>& sendRequests);
@@ -302,10 +302,8 @@ namespace pargrid {
          profParGridLB = -1;
          profMPI       = -1;
          profTotalLB   = -1;
-         profUserData  = -1;
+         profStaticData  = -1;
          profDynamicData = -1;
-         profDynamicDataMPI = -1;
-         profDynamicDataOld = -1;
          profStencilRecalc = -1;
       #endif
    }
@@ -353,7 +351,7 @@ namespace pargrid {
       ++N_totalCells;
       return success;
    }
-   
+
    /** Tell ParGrid that all new cells have been added. 
     * This function contains massive amount of MPI transfer, as 
     * each process must give every other process information on the 
@@ -467,12 +465,22 @@ namespace pargrid {
       } else {
 	 userDataID = userDataStatic.size() + userDataDynamic.size();
       }
-      
+
       // Initialize the new user data array:
       if (isDynamic == false) {
+	 if (userDataStatic.find(userDataID) != userDataStatic.end()) {
+	    std::cerr << "(PARGRID) ERROR: user data array with ID " << userDataID << " already exists" << std::endl;
+	    exit(1);
+	 }
+	 
 	 userDataStatic[userDataID] = new UserDataStatic<ParGrid<C> >();
 	 userDataStatic[userDataID]->initialize(this,name,N_totalCells,N_elements,sizeof(T),pargrid::getDatatype<T>());
       } else {
+	 if (userDataDynamic.find(userDataID) != userDataDynamic.end()) {
+	    std::cerr << "(PARGRID) ERROR: user data array with ID " << userDataID << " already exists" << std::endl;
+	    exit(1);
+	 }
+
 	 userDataDynamic[userDataID] = new UserDataDynamic<ParGrid<C> >();
 	 userDataDynamic[userDataID]->initialize(this,name,N_totalCells,sizeof(T),pargrid::getDatatype<T>());
       }
@@ -633,7 +641,7 @@ namespace pargrid {
       // Erase imports/exports from process A to process A:
       exportsPerProcess.erase(getRank());
       importsPerProcess.erase(getRank());
-      
+
       // Swap all cells' neighbour local IDs to global IDs:
       for (CellID c=0; c<N_localCells; ++c) {
 	 for (size_t n=0; n<N_neighbours; ++n) {
@@ -646,13 +654,13 @@ namespace pargrid {
       std::vector<MPI_Request> nbrRecvRequests;
       std::vector<MPI_Request> nbrSendRequests;
       startMetadataRepartitioning(nbrRecvRequests,importDisplacements,nbrSendRequests,exportDisplacements,newCellNeighbours);
-      
+
       // Set new host for all exported cells, it should not matter 
       // if cells are exported from process A to process A here:
       for (int c=0; c<N_export; ++c) {
 	 hosts[exportLocalIDs[c]] = exportProcesses[c];
       }
-      
+
       // Copy non-exported local cells to newCells:
       counter = 0;
       for (CellID c=0; c<N_localCells; ++c) {
@@ -726,18 +734,23 @@ namespace pargrid {
 	 }
 	 newNeighbourFlags[c] = nbrFlag;
       }
-      
+
       // Repartition user-defined data arrays:
       #ifdef PROFILE
-         profile::start("static user data",profUserData);
+         profile::start("static user data",profStaticData);
       #endif
-      repartitionUserDataStatic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importsPerProcess,
-				N_export,exportProcesses,exportLocalIDs);
+      repartitionUserDataStatic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importDisplacements,
+				N_export,exportProcesses,exportLocalIDs,exportDisplacements);
+      #ifdef PROFILE
+         profile::stop();
+         profile::start("dynamic user data",profDynamicData);
+      #endif
+
+      repartitionUserDataDynamic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importDisplacements,
+				 N_export,exportProcesses,exportLocalIDs,exportDisplacements);
       #ifdef PROFILE
          profile::stop();
       #endif
-      repartitionUserDataDynamic(newHosts.size(),newLocalsBegin,N_import,importProcesses,importDisplacements,
-				 N_export,exportProcesses,exportLocalIDs,exportDisplacements);
       
       // First host update pass:
       // Send list of exported cells and their new hosts to every remote process:
@@ -790,7 +803,7 @@ namespace pargrid {
 	    exit(1);
 	 }
       #endif
-      
+
       #ifdef PROFILE
          profile::start("MPI Waits",profMPI);
       #endif
@@ -991,7 +1004,7 @@ namespace pargrid {
       N_totalCells = hosts.size();
       cellNeighbours.swap(newCellNeighbours);
       neighbourFlags.swap(newNeighbourFlags);
-      
+
       // Recalculate and/or invalidate all other internal data that depends on partitioning:
       #ifdef PROFILE
          profile::start("Stencil Recalculation",profStencilRecalc);
@@ -1616,9 +1629,7 @@ namespace pargrid {
     * @see addUserData.*/
    template<class C> inline
    char* ParGrid<C>::getUserData(DataID userDataID) {
-      #ifndef NDEBUG
-         if (userDataStatic.find(userDataID) == userDataStatic.end()) return NULL;
-      #endif
+      if (userDataStatic.find(userDataID) == userDataStatic.end()) return NULL;
       return userDataStatic[userDataID]->array;
    }
    
@@ -2042,469 +2053,278 @@ namespace pargrid {
     * @return If true, user data was repartitioned successfully.*/
    template<class C> inline
    bool ParGrid<C>::repartitionUserDataStatic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
-					      const std::map<MPI_processID,unsigned int>& importsPerProcess,
-					      int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs) {
-      // Create a list of exported cells' (globalID,localID) pairs for each export process:
-      std::map<MPI_processID,std::vector<CellID> > transfers;
-      for (int i=0; i<N_export; ++i) {
-	 if (exportProcesses[i] == getRank()) continue;
-	 transfers[exportProcesses[i]].push_back(exportLocalIDs[i]);
-      }
-      
-      // Allocate N_userData MPI_Datatypes for each export process, where 
-      // N_userData is the number of currently allocated static user data arrays:
-      size_t counter = 0;
-      const size_t N_userData = userDataStatic.size();
-      std::vector<std::vector<MPI_Datatype> > userDatatypes;
-      for (std::map<MPI_processID,std::vector<CellID> >::const_iterator it=transfers.begin(); it!=transfers.end(); ++it) {
-	 if (it->first == getRank()) continue;
-	 userDatatypes.push_back(std::vector<MPI_Datatype>(N_userData));
-      }
-            
-      // Allocate a temporary container for new user data. Each array is 
-      // initialized to correct size, N_cells = local + remote cells:
-      std::map<DataID,UserDataStatic<ParGrid<C> >*> newUserData;
-      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
-	   it=userDataStatic.begin(); it!=userDataStatic.end(); ++it) {
-	 #ifndef NDEBUG
-	    if (it->second == NULL) {
-	       std::cerr << "(PARGRID) ERROR: userDataStatic #" << it->first << " is NULL in repartitionUserData!" << std::endl;
-	       exit(1);
-	    }
-	 #endif
-	 newUserData[it->first] = new UserDataStatic<ParGrid<C> >();
-	 newUserData[it->first]->initialize(this,it->second->name,N_cells,it->second->N_elements,it->second->byteSize,it->second->datatype);
-      }
-      
-      // Allocate enough send and recv requests:
-      int N_importProcesses = 0;
-      for (std::map<MPI_processID,unsigned int>::const_iterator it=importsPerProcess.begin(); it!=importsPerProcess.end(); ++it) {
-	 if (it->first == getRank()) continue;
-	 ++N_importProcesses;
-      }
-      recvRequests.resize(N_userData*N_importProcesses);
-      sendRequests.resize(N_userData*transfers.size());
+					      const std::map<MPI_processID,std::vector<int> >& importDisplacements,
+					      int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+					      const std::map<MPI_processID,std::vector<int> >& exportDisplacements) {
+      // Skip if there are no static user data arrays:
+      if (userDataStatic.size() == 0) return true;
 
-      // Receive user-defined data from import processes:
-      counter = 0;
-      size_t requestCounter = 0;
       for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
-	   user=newUserData.begin(); user!=newUserData.end(); ++user) {
-	 std::map<MPI_processID,MPI_Datatype> importDatatypes;
+	   userData=userDataStatic.begin(); userData!=userDataStatic.end(); ++userData) {
+	 // Allocate a temporary container for the new user data array:
+	 UserDataStatic<ParGrid<C> > newUserData;
+	 newUserData.initialize(this,userData->second->name,N_cells,userData->second->N_elements,
+				userData->second->byteSize,userData->second->datatype);
 
 	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = user->second->N_elements * user->second->byteSize;
+	 const int byteSize = userData->second->N_elements * userData->second->byteSize;
+
+	 // If static user data array contains no data, just swap arrays and skip MPI:
+	 if (byteSize == 0) {
+	    userData->second->swap(newUserData);
+	    newUserData.finalize();
+	    continue;
+	 }
+
 	 MPI_Datatype basicDatatype;
 	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
 	 MPI_Type_commit(&basicDatatype);
-	 
-	 // Store displacements to newUserdata for each imported cell:
-	 counter = newLocalsBegin;
-	 std::map<MPI_processID,std::vector<int> > displacements;
-	 for (int i=0; i<N_import; ++i) {
-	    if (importProcesses[i] == getRank()) continue;
-	    displacements[importProcesses[i]].push_back(counter);
-	    ++counter;
-	 }
 
-	 // Create datatypes for receiving all user data cells at once from each importing process:
-	 for (std::map<MPI_processID,std::vector<int> >::iterator it=displacements.begin(); it!=displacements.end(); ++it) {
-	    importDatatypes[it->first];
-	    MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),basicDatatype,&(importDatatypes[it->first]));
-	    MPI_Type_commit(&(importDatatypes[it->first]));
-	 }
+	 std::vector<MPI_Request> recvRequests(importDisplacements.size());
+	 std::vector<MPI_Request> sendRequests(exportDisplacements.size());
+	 std::vector<MPI_Datatype> recvDatatypes(importDisplacements.size());
+	 std::vector<MPI_Datatype> sendDatatypes(exportDisplacements.size());
 
-	 // Receive data:
-	 for (std::map<MPI_processID,MPI_Datatype>::iterator it=importDatatypes.begin(); it!=importDatatypes.end(); ++it) {
+	 // Iterate over all processes sending cells to this process:
+	 size_t recvRequestCounter = 0;
+	 for (typename std::map<MPI_processID,std::vector<int> >::const_iterator it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	    // Create an MPI datatype that transfers all incoming cells:
+	    int* displacements = const_cast<int*>(it->second.data());
+	    MPI_Type_create_indexed_block(it->second.size(),1,displacements,basicDatatype,&(recvDatatypes[recvRequestCounter]));
+	    MPI_Type_commit(&(recvDatatypes[recvRequestCounter]));
+
+	    // Post a receive:
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
-	    void* buffer               = user->second->array;
-	    MPI_Irecv(buffer,1,it->second,source,tag,comm,&(recvRequests[requestCounter]));
-	    ++requestCounter;
+	    char* buffer               = newUserData.array;
+	    MPI_Irecv(buffer,1,recvDatatypes[recvRequestCounter],source,tag,comm,&(recvRequests[recvRequestCounter]));
+	    ++recvRequestCounter;
 	 }
 	 
-	 // Free datatypes:
-	 for (std::map<MPI_processID,MPI_Datatype>::iterator it=importDatatypes.begin(); it!=importDatatypes.end(); ++it) {
-	    MPI_Type_free(&(it->second));
-	 }
-	 MPI_Type_free(&basicDatatype);
-	 importDatatypes.clear();
-      }
-      
-      // Send user-defined data to export processes:
-      requestCounter = 0;
-      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
-	   user=userDataStatic.begin(); user!=userDataStatic.end(); ++user) {
-	 std::map<MPI_processID,std::vector<int> > displacements;
-	 
-	 // Create an MPI datatype that transfers a single user data array element:
-	 const int byteSize = user->second->N_elements * user->second->byteSize;
-	 MPI_Datatype basicDatatype;
-	 MPI_Type_contiguous(byteSize,MPI_Type<char>(),&basicDatatype);
-	 MPI_Type_commit(&basicDatatype);
-	 
-	 // Store displacements to userData for each exported cell and send data:
-	 for (std::map<MPI_processID,std::vector<CellID> >::const_iterator it=transfers.begin(); it!=transfers.end(); ++it) {
-	    for (size_t j=0; j<it->second.size(); ++j) {
-	       displacements[it->first].push_back(it->second[j]);
-	    }
-
-	    void* buffer       = user->second->array;
-	    MPI_processID dest = it->first;
-	    const int tag      = getRank();
+	 // Iterate over all processes whom to send cells:
+	 size_t sendRequestCounter = 0;
+	 for (typename std::map<MPI_processID,std::vector<int> >::const_iterator it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	    // Create an MPI datatype that transfers all outgoing cells:
+	    int* displacements = const_cast<int*>(it->second.data());
+	    MPI_Type_create_indexed_block(it->second.size(),1,displacements,basicDatatype,&(sendDatatypes[sendRequestCounter]));
+	    MPI_Type_commit(&(sendDatatypes[sendRequestCounter]));
 	    
-	    MPI_Datatype sendDatatype;
-	    MPI_Type_create_indexed_block(displacements[it->first].size(),1,&(displacements[it->first][0]),basicDatatype,&sendDatatype);
-	    MPI_Type_commit(&sendDatatype);
-	    MPI_Isend(buffer,1,sendDatatype,dest,tag,comm,&(sendRequests[requestCounter]));
-	    ++requestCounter;
-	    MPI_Type_free(&sendDatatype);
+	    // Post a send:
+	    const MPI_processID dest = it->first;
+	    const int tag            = getRank();
+	    char* buffer             = userData->second->array;
+	    MPI_Isend(buffer,1,sendDatatypes[sendRequestCounter],dest,tag,comm,&(sendRequests[sendRequestCounter]));
+	    ++sendRequestCounter;
 	 }
-	 
-	 // Free datatypes:
-	 MPI_Type_free(&basicDatatype);
-      }
-      
-      // Copy data remaining on this process to newUserData:
-      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::const_iterator
-	   oldUser=userDataStatic.begin(); oldUser!=userDataStatic.end(); ++oldUser) {
-	 typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator 
-	   newUser=newUserData.find(oldUser->first);
-	 counter = 0;
+
+	 // Copy the cells that remain on this process:
+	 CellID counter = 0;
 	 for (CellID cell=0; cell<N_localCells; ++cell) {
 	    if (hosts[cell] != getRank()) continue;
-	    newUser->second->copy(*(oldUser->second),counter,cell);
+	    newUserData.copy(*(userData->second),counter,cell);
 	    ++counter;
 	 }
-      }
-      
-      // Wait for data sends and receives to complete:
-      MPI_Waitall(recvRequests.size(),&(recvRequests[0]),MPI_STATUSES_IGNORE);
-      MPI_Waitall(sendRequests.size(),&(sendRequests[0]),MPI_STATUSES_IGNORE);
 
-      // Swap newUserData and userData:
-      userDataStatic.swap(newUserData); // FIXME
-      
-      // Deallocate old user data:
-      for (typename std::map<DataID,UserDataStatic<ParGrid<C> >*>::iterator
-	   user=newUserData.begin(); user!=newUserData.end(); ++user) {
-	 user->second->finalize();
-	 delete user->second; user->second = NULL;
+	 // Wait for MPI transfers:
+	 MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+	 MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
+
+	 // Swap user data containers and deallocate memory:
+	 userData->second->swap(newUserData);
+	 newUserData.finalize();
+
+	 for (size_t i=0; i<recvRequestCounter; ++i) MPI_Type_free(&(recvDatatypes[i]));
+	 for (size_t i=0; i<sendRequestCounter; ++i) MPI_Type_free(&(sendDatatypes[i]));
+	 MPI_Type_free(&basicDatatype);
       }
+
       return true;
    }
 
+   /**
+    * @param N_cells Total number of cells (local + remote) in new mesh partition.
+    * @param newLocalsBegin Start index to data arrays where imported cells are copied.
+    * @param N_import Total number of cells imported to this process. 
+    * @param importProcesses For each imported cell, the MPI process ID who sends the data to this process.
+    * Note that importProcess may equal the MPI process ID of this process.
+    * @param importDisplacements For each MPI process sending cells to this process, a list of displacements 
+    * (starting from newLocalsBegin) where the cell data is to be copied.
+    * @param N_export Total number of cells this process exports to other processes.
+    * @param exportProcesses For each exported cell, the MPI process ID of the process receiving the cell.
+    * @param exportLocalIDs The local index of each exported cell.
+    * @param exportDisplacements For each MPI process receiving cells from this process, a list of cell
+    * local indices of cells exported to that proces.
+    * @return If true, dynamic user data was successfully exported.*/
    template<class C> inline
    bool ParGrid<C>::repartitionUserDataDynamic(size_t N_cells,CellID newLocalsBegin,int N_import,int* importProcesses,
-					       std::map<MPI_processID,std::vector<int> >& importDisplacements,int N_export,
-					       int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
-					       std::map<MPI_processID,std::vector<int> >& exportDisplacements) {
+					       const std::map<MPI_processID,std::vector<int> >& importDisplacements,
+					       int N_export,int* exportProcesses,ZOLTAN_ID_PTR exportLocalIDs,
+					       const std::map<MPI_processID,std::vector<int> >& exportDisplacements) {
+      // Return if there are no dynamic user data arrays:
+      if (userDataDynamic.size() == 0) return true;
+
       bool success = true;
-      #ifdef PROFILE
-         profile::start("dynamic user data",profDynamicData);
-      #endif
-      
-      // Allocate memory for new dynamic data arrays. Later on these will 
-      // be swapped with map userDataDynamic:
-      std::map<DataID,UserDataDynamic<ParGrid<C> >*> newUserData;
+
       for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   it=userDataDynamic.begin(); it!=userDataDynamic.end(); ++it) {
-	 #ifndef NDEBUG
-	    if (it->second == NULL) {
-	       std::cerr << "(PARGRID) ERROR: userDataDynamic #" << it->first << " is NULL in repartitionUserDataDynamic!" << std::endl;
-	       exit(1);
-	    }
-         #endif
-	 newUserData[it->first] = new UserDataDynamic<ParGrid<C> >();
-	 newUserData[it->first]->initialize(this,it->second->getName(),N_cells,it->second->getElementByteSize(),it->second->getDatatype());
-      }
-      
-      // ************************************************************* //
-      // ***** EXCHANGE THE AMOUNT OF IMPORTED AND EXPORTED DATA ***** //
-      // *****         WITH IMPORT AND EXPORT PROCESSES          ***** //
-      // ************************************************************* //
-      
-      // Create derived MPI datatypes for sending UserDataDynamic::sizes array(s):
-      std::vector<MPI_Datatype> exportDatatypes(exportDisplacements.size());
-      size_t counter = 0;
-      for (std::map<MPI_processID,std::vector<int> >::iterator
-	   it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
-	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),MPI_Type<ArraySizetype>(),&(exportDatatypes[counter]));
-	 MPI_Type_commit(&(exportDatatypes[counter]));
-	 ++counter;
-      }
-      
-      // Create derived MPI datatypes for receiving UserDataDynamic::sizes array(s):
-      std::vector<MPI_Datatype> importDatatypes(importDisplacements.size());
-      counter = 0;
-      for (std::map<MPI_processID,std::vector<int> >::iterator 
-	   it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
-	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),MPI_Type<ArraySizetype>(),&(importDatatypes[counter]));
-	 MPI_Type_commit(&(importDatatypes[counter]));
-	 ++counter;
-      }
-      
-      // Allocate enough MPI_Requests:
-      if (recvRequests.size() < importDisplacements.size() * newUserData.size())
-	recvRequests.resize(importDisplacements.size() * newUserData.size());
-      if (sendRequests.size() < exportDisplacements.size() * newUserData.size())
-	sendRequests.resize(exportDisplacements.size() * newUserData.size());
-      
-      // Receive UserDataDynamic::sizes array entries from each import process:
-      size_t recvRequestCounter = 0;
-      size_t sendRequestCounter = 0;
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   userNew=newUserData.begin(); userNew!=newUserData.end(); ++userNew) {
+	   userData=userDataDynamic.begin(); userData!=userDataDynamic.end(); ++userData) {
+	 // Create a new dynamic user data container:
+	 UserDataDynamic<ParGrid<C> > newUserData;
+	 newUserData.initialize(this,userData->second->getName(),N_cells,userData->second->getElementByteSize(),userData->second->getDatatype());
 	 
-	 // Post one receive per import process:
-	 counter = 0;
-	 for (std::map<MPI_processID,std::vector<int> >::iterator 
-	      it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	 if (userData->second->getElementByteSize() == 0) {
+	    userData->second->swap(newUserData);
+	    newUserData.finalize();
+	    continue;
+	 }
+	 
+	 std::vector<MPI_Request> recvRequests(importDisplacements.size());
+	 std::vector<MPI_Request> sendRequests(exportDisplacements.size());
+
+	 std::vector<MPI_Datatype> recvDatatypes(importDisplacements.size());
+	 std::vector<MPI_Datatype> sendDatatypes(exportDisplacements.size());
+
+	 // Iterate over all importing processes and receive the size array:
+	 size_t recvRequestCounter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::const_iterator it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	    int* displacements = const_cast<int*>(it->second.data());
+	    MPI_Type_create_indexed_block(it->second.size(),1,displacements,MPI_Type<ArraySizetype>(),&(recvDatatypes[recvRequestCounter]));
+	    MPI_Type_commit(&(recvDatatypes[recvRequestCounter]));
+	    
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
-	    void* buffer               = userNew->second->getSizePointer();
-	    MPI_Irecv(buffer,1,importDatatypes[counter],source,tag,comm,&(recvRequests[recvRequestCounter]));
-	    ++counter;
+	    void* buffer               = newUserData.getSizePointer();
+	    MPI_Irecv(buffer,1,recvDatatypes[recvRequestCounter],source,tag,comm,&(recvRequests[recvRequestCounter]));
 	    ++recvRequestCounter;
 	 }
-      }
-      
-      #ifndef NDEBUG
-         if (recvRequestCounter > recvRequests.size()) {
-	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " recvRequests.size() " << recvRequests.size();
-	    std::cerr << " recvRequestCounter " << recvRequestCounter << std::endl;
-	    exit(1);
-	 }
-      #endif
 
-      // Send UserDataDynamic::sizes array entries to each export process:
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   userOld=userDataDynamic.begin(); userOld!=userDataDynamic.end(); ++userOld) {
+	 size_t sendRequestCounter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::const_iterator it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	    int* displacements = const_cast<int*>(it->second.data());
+	    MPI_Type_create_indexed_block(it->second.size(),1,displacements,MPI_Type<ArraySizetype>(),&(sendDatatypes[sendRequestCounter]));
+	    MPI_Type_commit(&(sendDatatypes[sendRequestCounter]));
 
-	 // Post one send per export process:
-	 counter = 0;
-	 for (std::map<MPI_processID,std::vector<int> >::iterator
-	      it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
 	    const MPI_processID source = it->first;
 	    const int tag              = getRank();
-	    void* buffer               = userOld->second->getSizePointer();
-	    MPI_Isend(buffer,1,exportDatatypes[counter],source,tag,comm,&(sendRequests[sendRequestCounter]));
-	    ++counter;
+	    void* buffer               = userData->second->getSizePointer();
+	    MPI_Isend(buffer,1,sendDatatypes[sendRequestCounter],source,tag,comm,&(sendRequests[sendRequestCounter]));
 	    ++sendRequestCounter;
 	 }
-      }
-      
-       #ifndef NDEBUG
-         if (sendRequestCounter > sendRequests.size()) {
-	    std::cerr << "(PARGRID) ERROR: P#" << getRank() << " sendRequests.size() " << sendRequests.size();
-	    std::cerr << " sendRequestCounter " << sendRequestCounter << std::endl;
-	    exit(1);
-	 }
-      #endif
-      
-      // Free datatypes and deallocate datatype arrays:
-      for (size_t i=0; i<exportDatatypes.size(); ++i) MPI_Type_free(&(exportDatatypes[i]));
-      for (size_t i=0; i<importDatatypes.size(); ++i) MPI_Type_free(&(importDatatypes[i]));
-      exportDatatypes.clear();
-      importDatatypes.clear();
-      
-      // Copy sizes entries of cells remaining on this process:
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::const_iterator
-	   userOld=userDataDynamic.begin(); userOld!=userDataDynamic.end(); ++userOld) {
-	 // Find the corresponding new user data array:
-	 typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator 
-	   userNew = newUserData.find(userOld->first);
-	 
-	 #ifndef NDEBUG
-	    if (userNew == newUserData.end()) {
-	       std::cerr << "(PARGRID) ERROR: Invalid iterator in repartitionUserDataDynamic!" << std::endl;
-	       exit(1);
-	    }
-	 #endif
-	 
-	 // Get pointers to sizes arrays:
-	 const ArraySizetype* oldSizes = userOld->second->getSizePointer();
-	 ArraySizetype* newSizes       = userNew->second->getSizePointer();
-	 
-	 counter = 0;
+
+	 // Copy sizes entries of cells remaining on this process:
+	 const ArraySizetype* oldSizes = userData->second->getSizePointer();
+	 ArraySizetype* newSizes       = newUserData.getSizePointer();
+	 size_t counter = 0;
 	 for (CellID cell=0; cell<N_localCells; ++cell) {
 	    if (hosts[cell] != getRank()) continue;
 	    newSizes[counter] = oldSizes[cell];
 	    ++counter;
 	 }
-      }
-      
-      // Wait:
-      #ifdef PROFILE
-         profile::start("MPI waits",profDynamicDataMPI);
-      #endif
-      MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
-      MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
-      #ifdef PROFILE
-         profile::stop();
-      #endif
-      
-      // **************************************************** //
-      // ***** EXCHANGE DYNAMICALLY ALLOCATED DATA WITH ***** //
-      // *****       IMPORT AND EXPORT PROCESSES        ***** //
-      // **************************************************** //
-      
-      // Allocate memory for new dynamic data arrays:
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   it=newUserData.begin(); it!=newUserData.end(); ++it) {
-	 #ifndef NDEBUG
-	    if (it->second == NULL) {
-	       std::cerr << "(PARGRID) ERROR: newUserData[" << it->first << "] is NULL!" << std::endl;
-	       exit(1);
-	    }
-	 #endif
-	 it->second->reallocate(0,N_cells);
-      }
 
-      recvRequestCounter = 0;
-      sendRequestCounter = 0;
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   userNew=newUserData.begin(); userNew!=newUserData.end(); ++userNew) {
-	 
-	 // Create an MPI datatype for receiving one array element:
-	 MPI_Datatype datatype;
+	 // Wait for MPI transfers of size-arrays to complete:
+	 MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+	 MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
+
+	 for (size_t i=0; i<recvRequestCounter; ++i) MPI_Type_free(&(recvDatatypes[i]));
+	 for (size_t i=0; i<sendRequestCounter; ++i) MPI_Type_free(&(sendDatatypes[i]));
+
+	 // Allocate memory for incoming elements in new user data container:
+	 newUserData.reallocate(0,N_cells);
+
+	 // Create an MPI datatype that transfers a single element:
 	 MPI_Datatype basicDatatype;
-	 MPI_Type_contiguous(userNew->second->getElementByteSize(),MPI_Type<char>(),&basicDatatype);
-	 
-	 // Get pointers to arrays where data is received and amount of 
-	 // data to receive per cell (in elementByteSize):
-	 char** newArrays        = userNew->second->getArrayPointer();
-	 ArraySizetype* newSizes = userNew->second->getSizePointer();
+	 MPI_Type_contiguous(userData->second->getElementByteSize(),MPI_Type<char>(),&basicDatatype);
+	 MPI_Type_commit(&basicDatatype);
 
-	 // Displacements cannot be calculated as integer offsets any longer,
-	 // we have to use memory address offsets relative to MPI_BOTTOM here.
-	 // Blocklengths are not equal to unity either.
-	 counter = newLocalsBegin;
-	 MPI_Aint address;
-	 std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > > imports;
-	 for (int i=0; i<N_import; ++i) {
-	    if (importProcesses[i] == getRank()) continue;
+	 recvRequestCounter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::const_iterator it=importDisplacements.begin(); it!=importDisplacements.end(); ++it) {
+	    // Iterate over all cells received from process it->first, 
+	    // and store the buffer addresses to vector offsets:
+	    std::vector<MPI_Aint> offsets;
+	    std::vector<int> blockLengths;
+	    for (size_t i=0; i<it->second.size(); ++i) {
+	       // Get the local ID of the received cell:
+	       const CellID cellLID = it->second[i];
+	       
+	       // Get pointer to start of the data:
+	       void* ptr = newUserData.getArrayPointer()[cellLID];
 
-	    void* ptr = newArrays[counter];
-	    if (ptr == NULL) address = 0;
-	    else MPI_Get_address(newArrays[counter],&address);
+	       // Calculate offset relative to MPI_BOTTOM:
+	       MPI_Aint address;
+	       if (ptr == NULL) address = 0;
+	       else MPI_Get_address(ptr,&address);
 
-	    imports[importProcesses[i]].first.push_back(address);
-	    imports[importProcesses[i]].second.push_back(newSizes[counter]);
-	    ++counter;
-	 }
+	       offsets.push_back(address);
+	       blockLengths.push_back(newUserData.getSizePointer()[cellLID]);
+	    }
 
-	 // Post receives for imported data:
-	 for (std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > >::iterator
-	      it=imports.begin(); it!=imports.end(); ++it) {
-	    const int amount           = it->second.first.size();
-	    int* blocklengths          = &(it->second.second[0]);
-	    MPI_Aint* displacements    = &(it->second.first[0]);
+	    // Post a receive for cells imported from process it->first:
+	    const int amount           = it->second.size();
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
-	    MPI_Type_hindexed(amount,blocklengths,displacements,basicDatatype,&datatype);
-	    MPI_Type_commit(&datatype);
-	    MPI_Irecv(MPI_BOTTOM,1,datatype,source,tag,comm,&(recvRequests[recvRequestCounter]));
-	    MPI_Type_free(&datatype);
+
+	    MPI_Type_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(recvDatatypes[recvRequestCounter]));
+	    MPI_Type_commit(&(recvDatatypes[recvRequestCounter]));
+	    MPI_Irecv(MPI_BOTTOM,1,recvDatatypes[recvRequestCounter],source,tag,comm,&(recvRequests[recvRequestCounter]));
 	    ++recvRequestCounter;
 	 }
 	 
-	 // Get iterator to corresponding old user data array:
-	 typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator 
-	   userOld = userDataDynamic.find(userNew->first);
+	 sendRequestCounter = 0;
+	 for (std::map<MPI_processID,std::vector<int> >::const_iterator it=exportDisplacements.begin(); it!=exportDisplacements.end(); ++it) {
+	    // Iterate over all cells exported to process it->first,
+	    // and store the buffer addresses to vector offsets:
+	    std::vector<MPI_Aint> offsets;
+	    std::vector<int> blockLengths;
+	    for (size_t i=0; i<it->second.size(); ++i) {
+	       // Get the local ID of the exported cell:
+	       const CellID cellLID = it->second[i];
+	       
+	       // Get pointer to start of the data:
+	       void* ptr = userData->second->getArrayPointer()[cellLID];
 
-	 #ifndef NDEBUG
-	    if (userOld->second == NULL) {
-	       std::cerr << "(PARGRID) ERROR: userOld[" << userOld->first << "] is NULL!" << std::endl;
-	       exit(1);
+	       // Calculate offset relative to MPI_BOTTOM:
+	       MPI_Aint address;
+	       if (ptr == NULL) address = 0;
+	       else MPI_Get_address(ptr,&address);
+
+	       offsets.push_back(address);
+	       blockLengths.push_back(userData->second->getSizePointer()[cellLID]);
 	    }
-	 #endif
-	 
-	 // Get pointers to arrays containing exported data and
-	 // amount of data to export per cell (in elementByteSize):
-	 char** oldArrays        = userOld->second->getArrayPointer();
-	 ArraySizetype* oldSizes = userOld->second->getSizePointer();
-	 
-	 #ifndef NDEBUG
-	    if (oldArrays == NULL || oldSizes == NULL) {
-	       std::cerr << "(PARGRID) ERROR: Either oldArrays " << oldArrays << " or oldSizes " << oldSizes << " is NULL!" << std::endl;
-	       exit(1);
-	    }
-	 #endif
-	 
-	 std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > > exports;
-	 for (int i=0; i<N_export; ++i) {
-	    if (exportProcesses[i] == getRank()) continue;
-	    const ZOLTAN_ID_TYPE exportLocalID = exportLocalIDs[i];
 	    
-	    void* ptr = oldArrays[exportLocalID];
-	    if (ptr == NULL) address = 0;
-	    else MPI_Get_address(oldArrays[exportLocalID],&address);
+	    // Post a send for cells exported to process it->first:
+	    const int amount         = it->second.size();
+	    const MPI_processID dest = it->first;	    
+	    const int tag            = getRank();
 
-	    exports[exportProcesses[i]].first.push_back(address);
-	    exports[exportProcesses[i]].second.push_back(oldSizes[exportLocalID]);
-	 }
-
-	 // Post sends for exported data:
-	 for (std::map<MPI_processID,std::pair<std::vector<MPI_Aint>,std::vector<int> > >::iterator
-	      it=exports.begin(); it!=exports.end(); ++it) {
-	    const int amount           = it->second.first.size();
-	    int* blocklengths          = &(it->second.second[0]);
-	    MPI_Aint* displacements    = &(it->second.first[0]);
-	    const MPI_processID dest   = it->first;
-	    const int tag              = getRank();
-	    MPI_Type_hindexed(amount,blocklengths,displacements,basicDatatype,&datatype);
-	    MPI_Type_commit(&datatype);
-	    MPI_Isend(MPI_BOTTOM,1,datatype,dest,tag,comm,&(sendRequests[sendRequestCounter]));
-	    MPI_Type_free(&datatype);
+	    MPI_Type_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(sendDatatypes[sendRequestCounter]));
+	    MPI_Type_commit(&(sendDatatypes[sendRequestCounter]));
+	    MPI_Isend(MPI_BOTTOM,1,sendDatatypes[sendRequestCounter],dest,tag,comm,&(sendRequests[sendRequestCounter]));
 	    ++sendRequestCounter;
 	 }
-	 
-	 // Copy data remaining on this process:
-	 const ArraySizetype elementByteSize = userOld->second->getElementByteSize();
+
+	 // Copy cells remaining on this process:
+	 const ArraySizetype elementByteSize = userData->second->getElementByteSize();
+	 char** oldArray                     = userData->second->getArrayPointer();
+	 char** newArray                     = newUserData.getArrayPointer();
 	 counter = 0;
 	 for (CellID cell=0; cell<N_localCells; ++cell) {
 	    if (hosts[cell] != getRank()) continue;
-	    for (size_t i=0; i<oldSizes[cell]*elementByteSize; ++i)
-	      newArrays[counter][i] = oldArrays[cell][i];
+	    for (size_t i=0; i<userData->second->getSizePointer()[cell]*elementByteSize; ++i)
+	      newArray[counter][i] = oldArray[cell][i];
 	    ++counter;
 	 }
-      }
-      
-      #ifndef NDEBUG
-         if (recvRequestCounter > recvRequests.size()) {
-	    std::cerr << "(PARGRID) ERROR: recvRequestCounter " << recvRequestCounter << " recvRequests.size() " << recvRequests.size() << std::endl;
-	    exit(1);
-	 }
-         if (sendRequestCounter > sendRequests.size()) {
-	    std::cerr << "(PARGRID) ERROR: sendRequestCounter " << sendRequestCounter << " sendRequests.size() " << sendRequests.size() << std::endl;
-	    exit(1);
-	 }
-      #endif
-      
-      // Wait:
-      #ifdef PROFILE
-         profile::start("MPI waits",profDynamicDataMPI);
-      #endif
-      MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
-      MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
-      #ifdef PROFILE
-         profile::stop();
-      #endif
-      
-      // Swap old and new user data:
-      userDataDynamic.swap(newUserData);
-      
-      // Deallocate old user data:
-      for (typename std::map<DataID,UserDataDynamic<ParGrid<C> >*>::iterator
-	   it=newUserData.begin(); it!=newUserData.end(); ++it) {
-	 it->second->finalize();
-	 delete it->second; it->second = NULL;
-      }
 
-      #ifdef PROFILE
-         profile::stop();
-      #endif
+	 // Wait for MPI transfers to complete:
+	 MPI_Waitall(recvRequestCounter,&(recvRequests[0]),MPI_STATUSES_IGNORE);
+	 MPI_Waitall(sendRequestCounter,&(sendRequests[0]),MPI_STATUSES_IGNORE);
+
+	 // Swap arrays:
+	 userData->second->swap(newUserData);
+	 newUserData.finalize();
+
+	 for (size_t i=0; i<recvRequestCounter; ++i) MPI_Type_free(&(recvDatatypes[i]));
+	 for (size_t i=0; i<sendRequestCounter; ++i) MPI_Type_free(&(sendDatatypes[i]));
+	 MPI_Type_free(&basicDatatype);
+      }
       return success;
    }
 
@@ -2557,16 +2377,17 @@ namespace pargrid {
 	 // Create a datatype for receiving all neighbour IDs with a single receive:
 	 MPI_Type_create_indexed_block(it->second.size(),1,&(it->second[0]),basicDatatype,&datatype);
 	 MPI_Type_commit(&datatype);
-	 
+
 	 // Post a receive:
 	 const MPI_processID source = it->first;
 	 const int tag              = it->first;
 	 void* buffer               = &(newCellNeighbours[0]);
+
 	 MPI_Irecv(buffer,1,datatype,source,tag,comm,&(nbrRecvRequests[counter]));
 	 MPI_Type_free(&datatype);
 	 ++counter;
       }
-      
+
       // Send cell neighbour IDs:
       counter = 0;
       for (std::map<MPI_processID,std::vector<int> >::iterator
@@ -2579,11 +2400,12 @@ namespace pargrid {
 	 const MPI_processID dest = it->first;
 	 const int tag            = getRank();
 	 void* buffer             = &(cellNeighbours[0]);
+
 	 MPI_Isend(buffer,1,datatype,dest,tag,comm,&(nbrSendRequests[counter]));
 	 MPI_Type_free(&datatype);
 	 ++counter;
       }
-      
+
       MPI_Type_free(&basicDatatype);
    }
    
