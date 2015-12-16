@@ -98,9 +98,9 @@ namespace pargrid {
       // Allocate data arrays and copy contents:
       arrays = new char* [N_cells];
       for (CellID cell=0; cell<N_cells; ++cell) {
-	 arrays[cell] = new char[elementByteSize*capacities[cell]];
-	 for (ArraySizetype i=0; i<elementByteSize*sizes[cell]; ++i)
-	   arrays[cell][i] = udd.arrays[cell][i];
+	      arrays[cell] = new char[elementByteSize*capacities[cell]];
+	      for (ArraySizetype i=0; i<elementByteSize*sizes[cell]; ++i)
+	      arrays[cell][i] = udd.arrays[cell][i];
       }
       
       // Create a derived MPI datatype that transfers a single array element:
@@ -114,8 +114,8 @@ namespace pargrid {
    template<class PARGRID> inline
    void UserDataDynamic<PARGRID>::finalize() {
       for (DataID cell=0; cell<N_cells; ++cell) {
-	 delete [] arrays[cell];
-	 arrays[cell] = NULL;
+         delete [] arrays[cell];
+	      arrays[cell] = NULL;
       }
       delete [] arrays; arrays = NULL;
       delete [] capacities; capacities = NULL;
@@ -154,10 +154,10 @@ namespace pargrid {
       MPI_Aint* displacements     = new MPI_Aint[globalIDs.size()];
       CellID counter = 0;
       for (std::set<CellID>::const_iterator globalID=globalIDs.begin(); globalID!=globalIDs.end(); ++globalID) {
-	 const CellID localID = pargrid->getLocalID(*globalID);
-	 MPI_Get_address(arrays[localID],displacements+counter);
-	 blockLengths[counter] = sizes[localID];
-	 ++counter;
+	      const CellID localID = pargrid->getLocalID(*globalID);
+	      MPI_Get_address(arrays[localID],displacements+counter);
+	      blockLengths[counter] = sizes[localID];
+	      ++counter;
       }
       // Create a derived MPI datatype for sending or receiving all requested
       // data with a single send and commit the created datatype:
@@ -182,9 +182,9 @@ namespace pargrid {
       int* displacements = new int[globalIDs.size()];
       CellID counter = 0;
       for (std::set<CellID>::const_iterator globalID=globalIDs.begin(); globalID!=globalIDs.end(); ++globalID) {
-	 const CellID localID = pargrid->getLocalID(*globalID);
-	 displacements[counter] = localID;
-	 ++counter;
+	      const CellID localID = pargrid->getLocalID(*globalID);
+	      displacements[counter] = localID;
+	      ++counter;
       }
       
       // Create a derived datatype for transferring all array sizes
@@ -199,7 +199,7 @@ namespace pargrid {
    
    template<class PARGRID> inline
    void UserDataDynamic<PARGRID>::initialize(PARGRID* pargrid,const std::string& name,CellID N_cells,
-					     unsigned int elementByteSize,const std::string& datatype) {
+					                              unsigned int elementByteSize,const std::string& datatype) {
       this->pargrid         = pargrid;
       this->name            = name;
       this->N_cells         = N_cells;
@@ -224,11 +224,11 @@ namespace pargrid {
       // Iterate over the given range of cells and check that 
       // array capacities are at least as large as the requested sizes:
       for (CellID cell=start; cell<end; ++cell) {
-	 if (sizes[cell] > capacities[cell]) {
-	    delete [] arrays[cell];
-	    capacities[cell] = sizes[cell];
-	    arrays[cell] = new char[elementByteSize*capacities[cell]];
-	 }
+	      if (sizes[cell] > capacities[cell]) {
+	         delete [] arrays[cell];
+	         capacities[cell] = sizes[cell];
+	         arrays[cell] = new char[elementByteSize*capacities[cell]];
+	      }
       }
    }
 
