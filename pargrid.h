@@ -2262,7 +2262,7 @@ namespace pargrid {
 	    const MPI_processID source = it->first;
 	    const int tag              = it->first;
 
-	    MPI_Type_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(recvDatatypes[recvRequestCounter]));
+	    MPI_Type_create_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(recvDatatypes[recvRequestCounter]));
 	    MPI_Type_commit(&(recvDatatypes[recvRequestCounter]));
 	    MPI_Irecv(MPI_BOTTOM,1,recvDatatypes[recvRequestCounter],source,tag,comm,&(recvRequests[recvRequestCounter]));
 	    ++recvRequestCounter;
@@ -2295,7 +2295,7 @@ namespace pargrid {
 	    const MPI_processID dest = it->first;	    
 	    const int tag            = getRank();
 
-	    MPI_Type_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(sendDatatypes[sendRequestCounter]));
+	    MPI_Type_create_hindexed(amount,&(blockLengths[0]),&(offsets[0]),basicDatatype,&(sendDatatypes[sendRequestCounter]));
 	    MPI_Type_commit(&(sendDatatypes[sendRequestCounter]));
 	    MPI_Isend(MPI_BOTTOM,1,sendDatatypes[sendRequestCounter],dest,tag,comm,&(sendRequests[sendRequestCounter]));
 	    ++sendRequestCounter;

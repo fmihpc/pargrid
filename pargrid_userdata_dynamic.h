@@ -161,7 +161,7 @@ namespace pargrid {
       }
       // Create a derived MPI datatype for sending or receiving all requested
       // data with a single send and commit the created datatype:
-      MPI_Type_hindexed(globalIDs.size(),blockLengths,displacements,basicDatatype,&datatype);
+      MPI_Type_create_hindexed(globalIDs.size(),blockLengths,displacements,basicDatatype,&datatype);
       MPI_Type_commit(&datatype);
       delete [] blockLengths; blockLengths = NULL;
       delete [] displacements; displacements = NULL;
