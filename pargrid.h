@@ -247,7 +247,7 @@ namespace pargrid {
 
 
    template<typename T> inline
-   std::string getDatatype() { return "unknown"; }
+   std::string getDatatype() { return "int"; }
 
    template<> inline
    std::string getDatatype<bool>() { return "int"; }
